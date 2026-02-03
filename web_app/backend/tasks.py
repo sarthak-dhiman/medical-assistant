@@ -12,12 +12,15 @@ sys.path.append(str(PROJECT_ROOT))
 
 # Lazy Global Models
 seg_model = None
-jaundice_model = None
-skin_model = None
+jaundice_eye_model = None
+jaundice_skin_model = None
+skin_disease_model = None
 
 def load_models():
     """Loads models once per worker process."""
-    global seg_model, jaundice_model, skin_model
+    global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model
+    
+    errors = []
     
     if seg_model is None:
         try:
@@ -25,27 +28,47 @@ def load_models():
             print("Loading SegFormer...")
             seg_model = SegFormerWrapper()
         except Exception as e:
-            print(f"Failed to load SegFormer: {e}")
+            err_msg = f"Failed to load SegFormer: {e}"
+            print(err_msg)
+            errors.append(err_msg)
             
-    if jaundice_model is None:
+    if jaundice_eye_model is None:
         try:
             from inference_pytorch import predict_jaundice
-            print("Warming Jaundice Model (PyTorch)...")
-            jaundice_model = predict_jaundice # Function reference
+            print("Warming Jaundice Eye Model (PyTorch)...")
+            jaundice_eye_model = predict_jaundice 
         except Exception as e:
-            print(f"Failed to load Jaundice Logic: {e}")
+            err_msg = f"Failed to load Jaundice Eye Logic: {e}"
+            print(err_msg)
+            errors.append(err_msg)
 
-    if skin_model is None:
+    if jaundice_skin_model is None:
+        try:
+            from inference import predict_frame
+            print("Warming Jaundice Skin Model (Keras)...")
+            jaundice_skin_model = predict_frame
+        except Exception as e:
+            err_msg = f"Failed to load Jaundice Skin Logic: {e}"
+            print(err_msg)
+            errors.append(err_msg)
+
+    if skin_disease_model is None:
         try:
             from inference_skin import predict_skin_disease
-            print("Warming Skin Model...")
-            skin_model = predict_skin_disease # Function reference
+            print("Warming Skin Disease Model (Keras)...")
+            skin_disease_model = predict_skin_disease 
         except Exception as e:
-            print(f"Failed to load Skin Logic: {e}")
+            err_msg = f"Failed to load Skin Disease Logic: {e}"
+            print(err_msg)
+            errors.append(err_msg)
             
+    return errors
+
 @celery_app.task(bind=True)
 def predict_task(self, image_data_b64, mode):
-    load_models()
+    load_errors = load_models()
+    if load_errors:
+        return {"status": "error", "error": "Model Load Fail", "details": load_errors}
     
     # Decode Image
     try:
@@ -88,20 +111,20 @@ def predict_task(self, image_data_b64, mode):
              # Detect Jaundice on Body Skin
              masked_roi = cv2.bitwise_and(frame, frame, mask=skin_mask)
              if cv2.countNonZero(skin_mask) > 100:
-                 # Crop bounding box of skin
-                 y, x = np.where(skin_mask > 0)
-                 y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                 crop = masked_roi[y0:y1, x0:x1]
-                 
-                 # PyTorch Model expects (Skin, Sclera=None)
-                 label, conf = jaundice_model(crop, None)
-                 result.update({
-                     "label": label, 
-                     "confidence": conf, 
-                     "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
-                 })
+                  # Crop bounding box of skin
+                  y, x = np.where(skin_mask > 0)
+                  y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+                  crop = masked_roi[y0:y1, x0:x1]
+                  
+                  # Skin Jaundice stays on TensorFlow
+                  label, conf = jaundice_skin_model(crop)
+                  result.update({
+                      "label": label, 
+                      "confidence": float(conf), 
+                      "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
+                  })
              else:
-                 result.update({"label": "No Skin", "confidence": 0.0})
+                  result.update({"label": "No Skin", "confidence": 0.0})
 
         elif mode == "JAUNDICE_EYE":
             # 1. Extract Skin Crop (Context for Model)
@@ -117,14 +140,12 @@ def predict_task(self, image_data_b64, mode):
             
             any_jaundice = False
             
-            for crop, name, (x1, y1, x2, y2) in eyes:
+            for cropped_eye, name, (x1, y1, x2, y2) in eyes:
                 # Apply Iris Masking to remove colored iris (which confuses the model)
-                crop_masked, method = seg_model.apply_iris_mask(crop)
+                cropped_eye_masked, method = seg_model.apply_iris_mask(cropped_eye)
                 
-                from inference_pytorch import predict_jaundice
-                
-                # Pass accurate skin_crop + eye_crop
-                label, conf = predict_jaundice(skin_crop, crop_masked)
+                # Jaundice Eye detection uses PyTorch
+                label, conf = jaundice_eye_model(skin_crop, cropped_eye_masked)
                 
                 if label == "Jaundice":
                     any_jaundice = True
@@ -144,45 +165,6 @@ def predict_task(self, image_data_b64, mode):
             
             result["eyes"] = found_eyes
             
-            # DEBUG: Return the first localized/processed eye for user verification
-            if found_eyes:
-                _, buffer = cv2.imencode('.jpg', crop_masked)
-                debug_b64 = base64.b64encode(buffer).decode('utf-8')
-                result["debug_image"] = f"data:image/jpeg;base64,{debug_b64}"
-            
-            # Fallback: If no eyes found but we are in explicit Eye Mode (e.g. macro shot), 
-            # treat the whole frame as an eye.
-            if not found_eyes:
-                 name = "Macro/Single Eye"
-                 
-                 # Apply Iris Masking here too!
-                 frame_masked, method = seg_model.apply_iris_mask(frame)
-                 
-                 from inference_pytorch import predict_jaundice
-                 # Use the frame itself as skin fallback (or a corner? No, frame is best guess)
-                 label, conf = predict_jaundice(frame, frame_masked) 
-                 
-                 if label == "Jaundice":
-                     any_jaundice = True
-
-                 eye_result = {
-                    "name": name,
-                    "label": label,
-                    "confidence": float(conf),
-                    "bbox": [0.0, 0.0, 1.0, 1.0], # Whole frame
-                    "method": method
-                 }
-                 
-                 if method == "fallback":
-                     eye_result["warning"] = "Blurry image detected. Using fallback mode."
-                 
-                 found_eyes.append(eye_result)
-                 
-                 # DEBUG: Return the masked macro frame
-                 _, buffer = cv2.imencode('.jpg', frame_masked)
-                 debug_b64 = base64.b64encode(buffer).decode('utf-8')
-                 result["debug_image"] = f"data:image/jpeg;base64,{debug_b64}"
-            
             # Aggregate Result for UI
             if not found_eyes:
                 result["label"] = "No Eyes Detected"
@@ -197,18 +179,18 @@ def predict_task(self, image_data_b64, mode):
         elif mode == "SKIN_DISEASE":
              # Detect on Skin
              if cv2.countNonZero(skin_mask) > 100:
-                 y, x = np.where(skin_mask > 0)
-                 y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                 masked_roi = cv2.bitwise_and(frame, frame, mask=skin_mask)
-                 crop = masked_roi[y0:y1, x0:x1]
-                 
-                 label, conf = skin_model(crop)
-                 result.update({
-                     "label": label, 
-                     "confidence": float(conf), 
-                     "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
-                 })
+                  y, x = np.where(skin_mask > 0)
+                  y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+                  masked_roi = cv2.bitwise_and(frame, frame, mask=skin_mask)
+                  crop = masked_roi[y0:y1, x0:x1]
+                  
+                  label, conf = skin_disease_model(crop)
+                  result.update({
+                      "label": label, 
+                      "confidence": float(conf), 
+                      "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
+                  })
              else:
-                 result.update({"label": "No Skin", "confidence": 0.0})
+                  result.update({"label": "No Skin", "confidence": 0.0})
 
     return result

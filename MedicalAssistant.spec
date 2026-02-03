@@ -5,7 +5,7 @@ a = Analysis(
     ['webcam_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('saved_models', 'saved_models')],
+    datas=[],
     hiddenimports=['sklearn.utils._typedefs', 'sklearn.neighbors._partition_nodes', 'sklearn.metrics._pairwise_distances_reduction', 'PIL._tkinter_finder', 'timm', 'torch', 'torchvision'],
     hookspath=[],
     hooksconfig={},

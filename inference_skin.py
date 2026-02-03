@@ -37,7 +37,7 @@ class DenseWrapper(DenseLayer):
 
 # --- CONFIGURATION ---
 MODEL_PATH = Path("saved_models/_skin_model.keras")
-MAPPING_PATH = Path("saved_models/new_class_indices.json")
+MAPPING_PATH = Path("saved_models/class_indices.json")
 
 # --- LOAD RESOURCES (LAZY) ---
 _model = None
@@ -59,7 +59,7 @@ def get_model_and_mapping():
 
     # Try explicit path from Base Dir
     MODEL_PATH = BASE_DIR / "saved_models" / "_skin_model.keras"
-    MAPPING_PATH = BASE_DIR / "saved_models" / "new_class_indices.json"
+    MAPPING_PATH = BASE_DIR / "saved_models" / "class_indices.json"
 
     print(f"⏳ Loading model from {MODEL_PATH}...")
     try:

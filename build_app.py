@@ -23,6 +23,9 @@ def build():
         '--hidden-import=sklearn.neighbors._partition_nodes',
         '--hidden-import=sklearn.metrics._pairwise_distances_reduction',
         '--hidden-import=PIL._tkinter_finder',
+        '--hidden-import=timm',
+        '--hidden-import=torch',
+        '--hidden-import=torchvision',
     ]
     
     PyInstaller.__main__.run(args)

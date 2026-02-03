@@ -8,23 +8,39 @@ from tkinter import filedialog
 current_model = "JAUNDICE"  # Start in Jaundice mode
 
 try:
-    # Use PyTorch for Jaundice (GPU Enabled)
+    # 1. New PyTorch Model for EYE detection
     from inference_pytorch import predict_jaundice as predict_jaundice_torch
     
-    # Keep Skin Disease on Keras for now (or TODO: migrate)
+    # 2. Legacy Keras Model for BODY/SKIN Jaundice
+    from inference import predict_frame as predict_jaundice_keras
+    
+    # 3. Keras Model for general SKIN DISEASES
     from inference_skin import predict_skin_disease as predict_skin_model
+    
     from segformer_utils import SegFormerWrapper
     MODELS_LOADED = True
 except ImportError as e:
-    print(f"Warning: Dependency missing: {e}. Using dummy predictions.")
+    import tkinter.messagebox as messagebox
+    print(f"CRITICAL ERROR: Dependency missing: {e}")
+    # Show a proper dialog so the user knows why it's broken
+    root_temp = tk.Tk()
+    root_temp.withdraw()
+    messagebox.showerror("Model Loading Error", 
+        f"Could not load AI models because of missing libraries:\n\n{e}\n\n"
+        "The app will run in DUMMY MODE (no real predictions). "
+        "Please fix your virtual environment and install requirements.txt.")
+    root_temp.destroy()
+    
     MODELS_LOADED = False
     class SegFormerWrapper:
         def __init__(self): pass
         def predict(self, img): return np.zeros(img.shape[:2], dtype=np.uint8)
         def get_eye_rois(self, mask, img): return []
         def get_skin_mask(self, mask): return np.zeros(mask.shape, dtype=np.uint8)
-    def predict_jaundice_torch(skin, sclera=None): return "Jaundice", 0.88
-    def predict_skin_model(img): return "Eczema", 0.92
+        def apply_iris_mask(self, eye_img): return eye_img, "dummy"
+    def predict_jaundice_torch(skin, sclera=None): return "DUMMY: Jaundice", 0.0
+    def predict_jaundice_keras(img): return "DUMMY: Jaundice", 0.0
+    def predict_skin_model(img): return "DUMMY: Skin Disease", 0.0
 
 # --- 2. HELPER FUNCTIONS ---
 def get_manual_skin_mask(img):
@@ -77,9 +93,6 @@ def draw_sidebar(frame, width, mode_name, result_text, conf_text, warning_text, 
     if is_static_image:
         src_text = "IMAGE FILE"
         src_color = blue
-    elif fallback_active:
-        src_text = "FALLBACK"
-        src_color = yellow
     else:
         src_text = "AI MODEL"
         src_color = green
@@ -130,6 +143,13 @@ def main():
     # Load SegFormer (Heavy Model - Loads once)
     print("Loading SegFormer (Face Parsing)...")
     seg_model = SegFormerWrapper()
+
+    # Warmup Jaundice (Sclera) Model to show logs immediately
+    try:
+        from inference_pytorch import get_model as get_jaundice_model
+        get_jaundice_model() 
+    except Exception as e:
+        print(f"Error warming up Jaundice model: {e}")
 
     print("Starting Camera...")
     cap = cv2.VideoCapture(0)
@@ -202,24 +222,10 @@ def main():
         final_skin_mask = ai_skin_mask
         
         # Determine fallback threshold based on image size
-        # Default webcam is often 640x480 -> 307200 pixels. 2000 is ~0.6%
         threshold = (h * w) * 0.005 # 0.5% of pixels
         
         if ai_skin_count < threshold:
-            using_fallback = True
-            box_size = min(h, w) // 2
-            cx, cy = w//2, h//2
-            x1 = max(0, cx - box_size//2)
-            y1 = max(0, cy - box_size//2)
-            x2 = min(w, cx + box_size//2)
-            y2 = min(h, cy + box_size//2)
-            
-            fallback_mask = np.zeros((h, w), dtype=np.uint8)
-            roi = frame[y1:y2, x1:x2]
-            if roi.size > 0:
-                roi_mask = get_manual_skin_mask(roi)
-                fallback_mask[y1:y2, x1:x2] = roi_mask
-            final_skin_mask = fallback_mask
+            sidebar_warning = "Low Skin Detection"
 
         # --- MODE 1: JAUNDICE (BODY/SKIN) ---
         if current_model == "JAUNDICE_BODY":
@@ -239,7 +245,8 @@ def main():
                     cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
                     
                     if cropped_skin.size > 0:
-                        label, conf = predict_jaundice_torch(cropped_skin, None)
+                        # User requested BODY Jaundice stays on TensorFlow
+                        label, conf = predict_jaundice_keras(cropped_skin)
                         
                         # Draw Box on Face
                         color = (0, 0, 255) if "Jaundice" in label else (0, 255, 0)
@@ -291,7 +298,7 @@ def main():
 
                     # 2. Iris Masking (Fix for Cornea Confusion)
                     # We mask the iris to force the model to look at sclera
-                    masked_eye = seg_model.apply_iris_mask(cropped_eye)
+                    masked_eye, _ = seg_model.apply_iris_mask(cropped_eye)
 
                     # Model expects (Skin, Sclera)
                     label, conf = predict_jaundice_torch(skin_crop, masked_eye)
@@ -321,29 +328,7 @@ def main():
                         sidebar_conf = f"Avg Conf: {sum(confs)/len(confs)*100:.1f}%"
 
             else:
-                # FALLBACK: If uploaded image (Static) and no eyes found, 
-                # assume it's a MACRO shot of an eye (Close-up).
-                if is_static:
-                     # Treat full frame as the eye
-                     # 1. Blur Check
-                     blur_score = calculate_blur(frame)
-                     if blur_score < 100.0:
-                         sidebar_result = "Image Blurry"
-                         sidebar_warning = "Image is blurry"
-                     else:
-                         # 2. Iris Masking
-                         masked_eye = seg_model.apply_iris_mask(frame)
-                         
-                         # 3. Predict (Skin = Frame, Sclera = Frame)
-                         label, conf = predict_jaundice_torch(frame, masked_eye)
-                         
-                         sidebar_result = f"{label} (Macro)"
-                         sidebar_conf = f"Conf: {conf*100:.1f}%"
-                         
-                         # Draw box around whole image to indicate selection
-                         cv2.rectangle(frame, (0,0), (w-2, h-2), (0,255,0), 4)
-                else:
-                    sidebar_warning = "Align Eyes with Camera" if not is_static else "No eyes detected"
+                sidebar_warning = "No Eyes Detected"
 
         # --- MODE 3: SKIN DISEASE ---
         elif current_model == "SKIN_DISEASE":

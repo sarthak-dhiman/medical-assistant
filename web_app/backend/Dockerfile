@@ -18,12 +18,11 @@ RUN pip install --no-cache-dir -r requirements_web.txt
 ENV CACHEBUST=1
 
 
-# Copy Root-Level Inference Scripts (Crucial for importing segformer_utils, etc.)
+# Copy Root-Level Inference Scripts
 COPY segformer_utils.py .
 COPY inference.py .
 COPY inference_skin.py .
-COPY inference_sclera.py .
-COPY jaundice_combined.py .
+COPY inference_pytorch.py .
 # COPY saved_models/ ./saved_models/ # We will mount this via Volume for speed
 
 # Copy Backend Code

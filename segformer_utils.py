@@ -15,7 +15,8 @@ class SegFormerWrapper:
         Default: jonathandinu/face-parsing (19 classes)
         """
         try:
-            print(f"Loading Face Parsing Model: {model_name}...")
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Loading Face Parsing Model: {model_name} on {self.device}...")
             
             # 1. Determine Local Path
             if getattr(sys, 'frozen', False):
@@ -36,7 +37,7 @@ class SegFormerWrapper:
             # 3. Load
             if has_local_weights:
                 print(f"Loading from local path: {local_path}")
-                self.processor = SegFormerImageProcessor.from_pretrained(local_path)
+                self.processor = SegformerImageProcessor.from_pretrained(local_path)
                 self.model = AutoModelForSemanticSegmentation.from_pretrained(local_path)
             else:
                 # Fallback to HuggingFace
@@ -44,15 +45,15 @@ class SegFormerWrapper:
                 self.processor = SegformerImageProcessor.from_pretrained(model_name)
                 self.model = AutoModelForSemanticSegmentation.from_pretrained(model_name)
                 
-                # Optional: Save it for next time (Create directory if needed)
+                # Save it for next time (Create directory if needed)
+                print(f"Saving model to {local_path} for faster loading next time...")
                 if not os.path.exists(local_path):
                     os.makedirs(local_path, exist_ok=True)
-                # We don't auto-save here to avoid slowing down, but user can manually copy if needed.
+                self.processor.save_pretrained(local_path)
+                self.model.save_pretrained(local_path)
             
-            # Move to GPU if available
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model.to(self.device)
-            print(f"Model loaded successfully on {self.device}")
+            print(f"Model loaded successfully.")
             
             # Standard Face Parsing Labels (BiSeNet/CelebAMask-HQ convention)
             # 0: background
@@ -82,9 +83,6 @@ class SegFormerWrapper:
             print(f"ERROR Loading SegFormer: {e}")
             self.model = None
     
-    @property
-    def device(self):
-        return "cuda" if torch.cuda.is_available() else "cpu"
 
     def predict(self, image):
         """
@@ -218,7 +216,7 @@ class SegFormerWrapper:
                      cv2.circle(mask, (cx, cy), int(r*1.1), (0,0,0), -1)
                      
                      # SUCCESS: Used Hough
-                     return cv2.bitwise_and(eye_img, mask), "hough"
+                     return cv2.bitwise_and(eye_img, mask), ""
 
         # --- STRATEGY 2 (Fallback): Contrast + Contours (Previous Logic) ---
         # CLAHE (Contrast Limited Adaptive Histogram Equalization)
@@ -285,8 +283,8 @@ class SegFormerWrapper:
 
         # Apply mask
         eye_masked = cv2.bitwise_and(eye_img, mask)
-        # Fallback used
-        return eye_masked, "fallback"
+        # return mask as 'None' or just empty string to avoid UI showing it
+        return eye_masked, ""
 
     def get_skin_mask(self, mask):
         """

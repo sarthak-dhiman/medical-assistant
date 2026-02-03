@@ -6,3 +6,9 @@ numpy
 opencv-python
 keras
 torch
+torchvision
+timm
+transformers
+tensorflow
+tqdm
+scikit-learn
