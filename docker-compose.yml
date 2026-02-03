@@ -1,0 +1,59 @@
+services:
+  # 1. Message Broker
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+  # 2. Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: web_app/backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
+      - ./web_app/backend:/app/web_app/backend # Dev code sync
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  # 3. AI Worker
+  worker:
+    build:
+      context: .
+      dockerfile: web_app/backend/Dockerfile
+    command: celery -A web_app.backend.celery_app worker --loglevel=info
+    volumes:
+      - ./saved_models:/app/saved_models
+      - ./web_app/backend:/app/web_app/backend
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      # Force CPU for stability inside Docker unless --gpus passed
+      - CUDA_VISIBLE_DEVICES=-1
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  # 4. Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: web_app/frontend/Dockerfile
+    ports:
+      - "5173:80" # Map host 5173 to container 80 (Nginx)
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

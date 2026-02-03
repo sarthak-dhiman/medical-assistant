@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+celery[redis]
+redis
+python-multipart
+requests
+opencv-python-headless
+tensorflow
+pillow
+transformers
+torch
+--extra-index-url https://download.pytorch.org/whl/cpu

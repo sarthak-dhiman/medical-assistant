@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+venv_310/
+.env
+
+# Distribution / Packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# Node.js / React
+node_modules/
+client/node_modules/
+npm-debug.log
+yarn-error.log
+.pnp
+.pnp.js
+dist/
+build/
+
+# Dataset and Models
+Dataset/
+dataset_jaundice_eyes/
+# Keep some model files if needed, but usually large models are ignored
+saved_models/*.h5
+saved_models/*.keras
+saved_models/*.pt
+saved_models/*.pth
+saved_models/segformer/
+
+# OS Generated
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+
+augment_normal_eyes.py
