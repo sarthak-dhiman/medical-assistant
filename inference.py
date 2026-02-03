@@ -5,8 +5,24 @@ import sys
 from pathlib import Path
 
 import tensorflow as tf
-keras = tf.keras
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # Reduce TF logging
 
+# --- GPU Configuration ---
+try:
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print(f"✅ GPU Detected: {len(gpus)} device(s). Inference will use GPU.")
+        except RuntimeError as e:
+            print(f"GPU config error: {e}")
+    else:
+        print("⚠️ No GPU detected. Inference will run on CPU.")
+except Exception as e:
+    print(f"Error checking GPU: {e}")
+
+keras = tf.keras
 # --- Configuration ---
 if getattr(sys, 'frozen', False):
     # PyInstaller: Use executable's directory

@@ -29,11 +29,9 @@ def load_models():
             
     if jaundice_model is None:
         try:
-            from inference import predict_frame
-            # predict_frame loads model internally on first call
-            # We just need reference to the function or pre-warm it
-            print("Warming Jaundice Model...")
-            jaundice_model = predict_frame # Function reference
+            from inference_pytorch import predict_jaundice
+            print("Warming Jaundice Model (PyTorch)...")
+            jaundice_model = predict_jaundice # Function reference
         except Exception as e:
             print(f"Failed to load Jaundice Logic: {e}")
 
@@ -85,8 +83,6 @@ def predict_task(self, image_data_b64, mode):
         skin_mask = seg_model.get_skin_mask(mask)
         
         # --- ENCODE MASK FOR FRONTEND ---
-        # We can return the mask as base64 to overlay in frontend
-        # Or just return bbox coordinates. Let's return coords + prediction.
         
         if mode == "JAUNDICE_BODY":
              # Detect Jaundice on Body Skin
@@ -97,7 +93,8 @@ def predict_task(self, image_data_b64, mode):
                  y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
                  crop = masked_roi[y0:y1, x0:x1]
                  
-                 label, conf = jaundice_model(crop)
+                 # PyTorch Model expects (Skin, Sclera=None)
+                 label, conf = jaundice_model(crop, None)
                  result.update({
                      "label": label, 
                      "confidence": conf, 
@@ -124,10 +121,10 @@ def predict_task(self, image_data_b64, mode):
                 # Apply Iris Masking to remove colored iris (which confuses the model)
                 crop_masked, method = seg_model.apply_iris_mask(crop)
                 
-                from inference_sclera import predict_sclera_jaundice
+                from inference_pytorch import predict_jaundice
                 
                 # Pass accurate skin_crop + eye_crop
-                label, conf = predict_sclera_jaundice(skin_crop, crop_masked)
+                label, conf = predict_jaundice(skin_crop, crop_masked)
                 
                 if label == "Jaundice":
                     any_jaundice = True
@@ -149,8 +146,6 @@ def predict_task(self, image_data_b64, mode):
             
             # DEBUG: Return the first localized/processed eye for user verification
             if found_eyes:
-                # Get the processed crop from the last iteration or first
-                # We need to re-encode the last masked crop to show user what the AI saw
                 _, buffer = cv2.imencode('.jpg', crop_masked)
                 debug_b64 = base64.b64encode(buffer).decode('utf-8')
                 result["debug_image"] = f"data:image/jpeg;base64,{debug_b64}"
@@ -158,17 +153,14 @@ def predict_task(self, image_data_b64, mode):
             # Fallback: If no eyes found but we are in explicit Eye Mode (e.g. macro shot), 
             # treat the whole frame as an eye.
             if not found_eyes:
-                 # Check if the image resembles an eye or just force it? 
-                 # For now, just force it as "Macro Eye"
-                 # Use the whole frame as crop
                  name = "Macro/Single Eye"
                  
                  # Apply Iris Masking here too!
                  frame_masked, method = seg_model.apply_iris_mask(frame)
                  
-                 from inference_sclera import predict_sclera_jaundice
+                 from inference_pytorch import predict_jaundice
                  # Use the frame itself as skin fallback (or a corner? No, frame is best guess)
-                 label, conf = predict_sclera_jaundice(frame, frame_masked) 
+                 label, conf = predict_jaundice(frame, frame_masked) 
                  
                  if label == "Jaundice":
                      any_jaundice = True
@@ -193,12 +185,10 @@ def predict_task(self, image_data_b64, mode):
             
             # Aggregate Result for UI
             if not found_eyes:
-                # Should not reach here due to fallback, but safe to keep
                 result["label"] = "No Eyes Detected"
                 result["confidence"] = 0.0
             elif any_jaundice:
                 result["label"] = "Jaundice"
-                # Avg confidence of jaundice eyes? Or Max? Taking Max is safer for alerts.
                 result["confidence"] = max([e["confidence"] for e in found_eyes if e["label"] == "Jaundice"])
             else:
                 result["label"] = "Normal"

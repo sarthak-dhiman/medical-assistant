@@ -6,6 +6,23 @@ import sys
 from pathlib import Path
 
 import tensorflow as tf
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+# --- GPU Configuration ---
+try:
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print(f"✅ GPU Detected: {len(gpus)} device(s). Inference (Skin) will use GPU.")
+        except RuntimeError as e:
+            print(f"GPU config error: {e}")
+    else:
+        print("⚠️ No GPU detected. Inference (Skin) will run on CPU.")
+except Exception as e:
+    print(f"Error checking GPU: {e}")
+
 from tensorflow import keras
 
 # Workaround for models that include 'quantization_config' in layer configs.

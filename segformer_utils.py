@@ -81,38 +81,59 @@ class SegFormerWrapper:
         except Exception as e:
             print(f"ERROR Loading SegFormer: {e}")
             self.model = None
+    
+    @property
+    def device(self):
+        return "cuda" if torch.cuda.is_available() else "cpu"
 
-    def predict(self, image_bgr):
+    def predict(self, image):
         """
-        Runs inference on a BGR image (numpy array).
-        Returns: Class ID mask (numpy array, same shape as input HxW)
+        Runs inference on a single image (numpy array BGR or RGB).
+        Returns class mask (H, W).
         """
         if self.model is None:
-            return np.zeros(image_bgr.shape[:2], dtype=np.uint8)
+            # Return an empty mask if the model failed to load
+            if isinstance(image, np.ndarray):
+                return np.zeros(image.shape[:2], dtype=np.uint8)
+            elif isinstance(image, Image.Image):
+                return np.zeros(image.size[::-1], dtype=np.uint8)
+            else:
+                raise ValueError("Unsupported image type. Must be numpy array or PIL Image.")
 
-        # Convert to RGB and PIL
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(image_rgb)
+        # Convert to PIL (RGB)
+        if isinstance(image, np.ndarray):
+            # Assume BGR if 3 channels, convert to RGB
+            if image.ndim == 3 and image.shape[2] == 3:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image_pil = Image.fromarray(image)
+        else:
+            image_pil = image
+            
+        inputs = self.processor(images=image_pil, return_tensors="pt")
+        
+        # Move inputs to device
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        # Ensure model is on device (lazy move)
+        if self.model.device.type != self.device:
+            self.model.to(self.device)
 
-        # Preprocess
-        inputs = self.processor(images=pil_image, return_tensors="pt").to(self.device)
-
-        # Inference
         with torch.no_grad():
             outputs = self.model(**inputs)
-            logits = outputs.logits  # shape (batch, num_labels, height/4, width/4)
-
-        # Resize logits to original image size
-        # Bi-linear interpolation is standard for segmentation logits
+            
+        logits = outputs.logits  # shape (1, num_labels, H/4, W/4)
+        
+        # Upsample logits to original size
         upsampled_logits = torch.nn.functional.interpolate(
             logits,
-            size=pil_image.size[::-1], # (height, width)
+            size=image_pil.size[::-1], # (H, W)
             mode="bilinear",
             align_corners=False,
         )
-
-        # Get class IDs
-        pred_seg = upsampled_logits.argmax(dim=1)[0] # (height, width)
+        
+        # Argmax to get labels
+        pred_seg = upsampled_logits.argmax(dim=1)[0] # (H, W)
+        
         return pred_seg.cpu().numpy().astype(np.uint8)
 
     def get_eye_rois(self, mask, image_bgr):

@@ -2,8 +2,8 @@
 
 ## Overview
 This is a comprehensive multi-modal disease prediction system capable of detecting:
-1.  **Skin Diseases**: 38 different categories of skin conditions.
-2.  **Jaundice**: Using both skin tone analysis and sclera (eye) segmentation.
+*   **Skin Diseases**: 38 different categories of skin conditions.
+*   **Jaundice**: Using both skin tone analysis and sclera (eye) segmentation.
 
 The system features a **FastAPI** backend for high-performance inference and a **React** frontend for a premium user experience.
 
@@ -11,52 +11,52 @@ The system features a **FastAPI** backend for high-performance inference and a *
 
 ## 🧠 AI Models
 
-### 1. Skin Disease Detection Model
+### Skin Disease Detection Model
 *   **Architecture**: EfficientNetB0 (Transfer Learning)
 *   **Backend**: Keras (TensorFlow/PyTorch)
 *   **Input**: 224x224 RGB Images
 *   **Training Status**: Trained on a massive merged dataset of ~32,000 images.
 *   **Classes (38 Types)**:
-    1)  Acne
-    2)  Actinic Keratosis
-    3)  Atopic Dermatitis
-    4)  Benign Tumors
-    5)  Bullous
-    6)  Candidiasis
-    7)  Cellulitis Impetigo
-    8)  Contact Dermatitis
-    9)  Drug Eruption
-    10) Dry Skin
-    11) Eczema
-    12) Herpes HPV STD
-    13) Infestations Bites
-    14) Lichen
-    15) Lupus
-    16) Moles
-    17) Monkeypox
-    18) Normal
-    19) Oily Skin
-    20) Perioral Dermatitis
-    21) Pigment Disorders
-    22) Psoriasis
-    23) Rosacea
-    24) Scabies
-    25) Sebaceous Glands
-    26) Seborrheic Keratoses
-    27) Seborrheic Dermatitis
-    28) Skin Cancer
-    29) Sun Sunlight Damage
-    30) Systemic Disease
-    31) TineaS
-    32) Tinea Fungal
-    33) Unknown Normal
-    34) Urticaria Hives
-    35) Vascular Tumors
-    36) Vasculitis
-    37) Vitiligo
-    38) Warts
+    *   Acne
+    *   Actinic Keratosis
+    *   Atopic Dermatitis
+    *   Benign Tumors
+    *   Bullous
+    *   Candidiasis
+    *   Cellulitis Impetigo
+    *   Contact Dermatitis
+    *   Drug Eruption
+    *   Dry Skin
+    *   Eczema
+    *   Herpes HPV STD
+    *   Infestations Bites
+    *   Lichen
+    *   Lupus
+    *   Moles
+    *   Monkeypox
+    *   Normal
+    *   Oily Skin
+    *   Perioral Dermatitis
+    *   Pigment Disorders
+    *   Psoriasis
+    *   Rosacea
+    *   Scabies
+    *   Sebaceous Glands
+    *   Seborrheic Keratoses
+    *   Seborrheic Dermatitis
+    *   Skin Cancer
+    *   Sun Sunlight Damage
+    *   Systemic Disease
+    *   TineaS
+    *   Tinea Fungal
+    *   Unknown Normal
+    *   Urticaria Hives
+    *   Vascular Tumors
+    *   Vasculitis
+    *   Vitiligo
+    *   Warts
 
-### 2. Jaundice Detection (Combined)
+### Jaundice Detection (Combined)
 *   **Approach**: Multi-Input Model
 *   **Input A (Skin)**: Facial skin analysis for yellow discoloration.
 *   **Input B (Sclera)**: **SegFormer** model extracts the sclera (white part of the eye) to analyze pixel color values (yellow vs white ratio).
@@ -84,12 +84,12 @@ The system features a **FastAPI** backend for high-performance inference and a *
 
 ### Initial Setup Flow
 
-**1. Prerequisites**
+**Prerequisites**
 *   **Python**: Ensure you have Python 3.10 installed.
 *   **Git**: For cloning the repository.
 *   **CUDA (Optional)**: For GPU acceleration (recommended for faster inference).
 
-**2. Installation**
+**Installation**
 
 1.  **Clone the Repository**:
     ```bash
@@ -109,13 +109,13 @@ The system features a **FastAPI** backend for high-performance inference and a *
     pip install -r requirements.txt
     ```
 
-**3. Model Acquisition (Auto-Setup)**
+**Model Acquisition (Auto-Setup)**
 *   The system uses a **SegFormer** model for eye segmentation (`jonathandinu/face-parsing`).
 *   **You do NOT need to manually download this.**
 *   The first time you run the application (or `segformer_utils.py`), the script will **automatically download** the necessary model files from HuggingFace and save them to `saved_models/segformer/`.
 *   *Note: Ensure you have an internet connection for this first run.*
 
-**4. Running the Application**
+**Running the Application**
 
 **Backend Server (Dev Mode)**:
 ```bash
@@ -129,9 +129,9 @@ npm install  # First time only
 npm run dev
 ```
 
-**5. Training**
+**Training**
 *   **Skin Model**: `python train_skin_model.py`
-*   **Jaundice Model**: `python train_jaundice_with_sclera.py`
+*   **Jaundice Model**: `python train_jaundice_pytorch.py`
 
 ### Environment
 *   Configured to prefer **PyTorch** backend for Keras `os.environ["KERAS_BACKEND"] = "torch"`.

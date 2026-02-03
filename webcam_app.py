@@ -8,9 +8,11 @@ from tkinter import filedialog
 current_model = "JAUNDICE"  # Start in Jaundice mode
 
 try:
-    from inference import predict_frame as predict_jaundice_model
+    # Use PyTorch for Jaundice (GPU Enabled)
+    from inference_pytorch import predict_jaundice as predict_jaundice_torch
+    
+    # Keep Skin Disease on Keras for now (or TODO: migrate)
     from inference_skin import predict_skin_disease as predict_skin_model
-    from inference_sclera import predict_sclera_jaundice as predict_sclera_model
     from segformer_utils import SegFormerWrapper
     MODELS_LOADED = True
 except ImportError as e:
@@ -21,9 +23,8 @@ except ImportError as e:
         def predict(self, img): return np.zeros(img.shape[:2], dtype=np.uint8)
         def get_eye_rois(self, mask, img): return []
         def get_skin_mask(self, mask): return np.zeros(mask.shape, dtype=np.uint8)
-    def predict_jaundice_model(img): return "Jaundice", 0.88
+    def predict_jaundice_torch(skin, sclera=None): return "Jaundice", 0.88
     def predict_skin_model(img): return "Eczema", 0.92
-    def predict_sclera_model(skin, sclera): return "Jaundice", 0.85
 
 # --- 2. HELPER FUNCTIONS ---
 def get_manual_skin_mask(img):
@@ -238,7 +239,7 @@ def main():
                     cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
                     
                     if cropped_skin.size > 0:
-                        label, conf = predict_jaundice_model(cropped_skin)
+                        label, conf = predict_jaundice_torch(cropped_skin, None)
                         
                         # Draw Box on Face
                         color = (0, 0, 255) if "Jaundice" in label else (0, 255, 0)
@@ -293,7 +294,7 @@ def main():
                     masked_eye = seg_model.apply_iris_mask(cropped_eye)
 
                     # Model expects (Skin, Sclera)
-                    label, conf = predict_sclera_model(skin_crop, masked_eye)
+                    label, conf = predict_jaundice_torch(skin_crop, masked_eye)
                     
                     color = (0, 0, 255) if "Jaundice" in label else (0, 255, 0)
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -334,7 +335,7 @@ def main():
                          masked_eye = seg_model.apply_iris_mask(frame)
                          
                          # 3. Predict (Skin = Frame, Sclera = Frame)
-                         label, conf = predict_sclera_model(frame, masked_eye)
+                         label, conf = predict_jaundice_torch(frame, masked_eye)
                          
                          sidebar_result = f"{label} (Macro)"
                          sidebar_conf = f"Conf: {conf*100:.1f}%"

@@ -1,0 +1,23 @@
+FROM tensorflow/tensorflow:latest-gpu
+
+WORKDIR /app
+
+# Install system dependencies for OpenCV
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    opencv-python-headless \
+    scikit-image \
+    scikit-learn \
+    pandas
+
+# Copy project files
+# We will mount the directory instead of copying to allow finding files
+# But we need basic script access if we don't mount everything
+# COPY . /app
+
+CMD ["python", "train_jaundice_with_sclera.py"]
