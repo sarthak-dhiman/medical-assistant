@@ -46,10 +46,10 @@ build/
 Dataset/
 dataset_jaundice_eyes/
 # Keep some model files if needed, but usually large models are ignored
-saved_models/*.h5
-saved_models/*.keras
-saved_models/*.pt
-saved_models/*.pth
+# saved_models/*.h5
+# saved_models/*.keras
+# saved_models/*.pt
+# saved_models/*.pth
 saved_models/segformer/
 
 # OS Generated

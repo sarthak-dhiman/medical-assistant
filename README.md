@@ -17,44 +17,44 @@ The system features a **FastAPI** backend for high-performance inference and a *
 *   **Input**: 224x224 RGB Images
 *   **Training Status**: Trained on a massive merged dataset of ~32,000 images.
 *   **Classes (38 Types)**:
-    1.  Acne
-    2.  Actinic Keratosis
-    3.  Atopic Dermatitis
-    4.  Benign Tumors
-    5.  Bullous
-    6.  Candidiasis
-    7.  Cellulitis Impetigo
-    8.  Contact Dermatitis
-    9.  Drug Eruption
-    10. Dry Skin
-    11. Eczema
-    12. Herpes HPV STD
-    13. Infestations Bites
-    14. Lichen
-    15. Lupus
-    16. Moles
-    17. Monkeypox
-    18. Normal
-    19. Oily Skin
-    20. Perioral Dermatitis
-    21. Pigment Disorders
-    22. Psoriasis
-    23. Rosacea
-    24. Scabies
-    25. Sebaceous Glands
-    26. Seborrheic Keratoses
-    27. Seborrheic Dermatitis
-    28. Skin Cancer
-    29. Sun Sunlight Damage
-    30. Systemic Disease
-    31. Tinea
-    32. Tinea Fungal
-    33. Unknown Normal
-    34. Urticaria Hives
-    35. Vascular Tumors
-    36. Vasculitis
-    37. Vitiligo
-    38. Warts
+    1)  Acne
+    2)  Actinic Keratosis
+    3)  Atopic Dermatitis
+    4)  Benign Tumors
+    5)  Bullous
+    6)  Candidiasis
+    7)  Cellulitis Impetigo
+    8)  Contact Dermatitis
+    9)  Drug Eruption
+    10) Dry Skin
+    11) Eczema
+    12) Herpes HPV STD
+    13) Infestations Bites
+    14) Lichen
+    15) Lupus
+    16) Moles
+    17) Monkeypox
+    18) Normal
+    19) Oily Skin
+    20) Perioral Dermatitis
+    21) Pigment Disorders
+    22) Psoriasis
+    23) Rosacea
+    24) Scabies
+    25) Sebaceous Glands
+    26) Seborrheic Keratoses
+    27) Seborrheic Dermatitis
+    28) Skin Cancer
+    29) Sun Sunlight Damage
+    30) Systemic Disease
+    31) TineaS
+    32) Tinea Fungal
+    33) Unknown Normal
+    34) Urticaria Hives
+    35) Vascular Tumors
+    36) Vasculitis
+    37) Vitiligo
+    38) Warts
 
 ### 2. Jaundice Detection (Combined)
 *   **Approach**: Multi-Input Model
@@ -147,6 +147,34 @@ npm run dev
 *   The goal of the standalone app is to provide a simple way to run the app without requiring the user to install Python and other dependencies. It is also a way to distribute the app to users who may not have Python installed. basically it packs the whole project into a single zipped format allowing for just a quick download standing between the user and his diagnosis. 
 
 *   The app even though not perfect is a MVP (Minimum Viable Product) and is a work in progress. I plan to add more features and improve the app in the future , like more datasets in the future to increas the number of diseases that can be detected by the application. though its verdict should not be taken as the final verdict and the app should be used as a tool to help the user understand the possible diseases that can be detected by the application and not as a  medical diagnosis, for those please visit the doctors near you.
+
+### 🚀 Async Architecture & Docker (Redis + Celery)
+For production-grade performance, the system uses **Redis** and **Celery** to handle heavy AI inference tasks asynchronously.
+
+*   **Redis**: Acts as the message broker and result backend.
+*   **Celery**: Worker process that picks up inference tasks from the queue and processes them in the background, preventing the main API from blocking.
+
+**Running with Docker (Recommended for Full Stack):**
+The project includes a `docker-compose.yml` that orchestrates the entire stack (Frontend, Backend, Redis, Worker).
+
+```bash
+docker-compose up --build
+```
+*   **Frontend**: `http://localhost:5173`
+*   **Backend**: `http://localhost:8000`
+*   **Worker**: Runs in background (Monitor logs: `docker-compose logs -f worker`)
+
+**Running Manually (Dev Mode):**
+If you want to run the async stack manually:
+1.  **Start Redis**: Ensure Redis is running on port 6379.
+2.  **Start Worker**: 
+    ```bash
+    celery -A web_app.backend.celery_app worker --loglevel=info
+    ```
+3.  **Start Backend**:
+    ```bash
+    uvicorn app.main:app --reload
+    ```
 ### Usage
 *   `MedicalAssistant.exe`: Run the standalone app.
 *   `webcam_app.py`: Run the app from source code.
