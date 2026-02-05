@@ -11,11 +11,11 @@ try:
     # 1. New PyTorch Model for EYE detection
     from inference_pytorch import predict_jaundice as predict_jaundice_torch
     
-    # 2. Legacy Keras Model for BODY/SKIN Jaundice
-    from inference import predict_frame as predict_jaundice_keras
+    # 2. New PyTorch Model for BODY/SKIN Jaundice (Replaces Keras)
+    from inference_pytorch import predict_jaundice_body as predict_jaundice_body_torch
     
-    # 3. Keras Model for general SKIN DISEASES
-    from inference_skin import predict_skin_disease as predict_skin_model
+    # 3. PyTorch Model for SKIN DISEASES (Replaces Keras)
+    from inference_pytorch import predict_skin_disease_torch
     
     from segformer_utils import SegFormerWrapper
     MODELS_LOADED = True
@@ -39,8 +39,8 @@ except ImportError as e:
         def get_skin_mask(self, mask): return np.zeros(mask.shape, dtype=np.uint8)
         def apply_iris_mask(self, eye_img): return eye_img, "dummy"
     def predict_jaundice_torch(skin, sclera=None): return "DUMMY: Jaundice", 0.0
-    def predict_jaundice_keras(img): return "DUMMY: Jaundice", 0.0
-    def predict_skin_model(img): return "DUMMY: Skin Disease", 0.0
+    def predict_jaundice_body_torch(img): return "DUMMY: Jaundice", 0.0
+    def predict_skin_disease_torch(img): return "DUMMY: Skin Disease", 0.0
 
 # --- 2. HELPER FUNCTIONS ---
 def get_manual_skin_mask(img):
@@ -245,8 +245,8 @@ def main():
                     cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
                     
                     if cropped_skin.size > 0:
-                        # User requested BODY Jaundice stays on TensorFlow
-                        label, conf = predict_jaundice_keras(cropped_skin)
+                        # Updated to PyTorch (Unified)
+                        label, conf = predict_jaundice_body_torch(cropped_skin)
                         
                         # Draw Box on Face
                         color = (0, 0, 255) if "Jaundice" in label else (0, 255, 0)
@@ -344,7 +344,7 @@ def main():
                     cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
                     
                     if cropped_skin.size > 0:
-                        label, conf = predict_skin_model(cropped_skin)
+                        label, conf = predict_skin_disease_torch(cropped_skin)
                         color = (0, 255, 0) if "Healthy" in label else (0, 0, 255)
                         
                         cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, 2)

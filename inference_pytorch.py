@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 import timm
 from pathlib import Path
-
 import sys
+import json
 
 # --- Configuration ---
-IMG_SIZE = (380, 380)
+IMG_SIZE = (380, 380) # EfficientNet-B4 Native Resolution
 SCLERA_SIZE = (64, 64)
 
 if getattr(sys, 'frozen', False):
@@ -16,12 +16,13 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = Path(__file__).parent
 
-MODEL_PATH = BASE_DIR / "saved_models" / "jaundice_with_sclera_torch.pth"
 # AUTO DETECT GPU:
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"DEBUG: PyTorch will use device: {DEVICE}", flush=True)
 
-# --- Model Arch (Must Match Training) ---
+# --- Model Architectures (Must Match Training) ---
+
+# 1. Jaundice Eye Model (EfficientNet-B4 + Sclera Branch)
 class JaundiceModel(nn.Module):
     def __init__(self):
         super(JaundiceModel, self).__init__()
@@ -53,73 +54,204 @@ class JaundiceModel(nn.Module):
         logits = self.classifier(concat)
         return logits
 
-# --- Resource Loading ---
-_model = None
+# 2. Jaundice Body Model (EfficientNet-B4)
+class JaundiceBodyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Use simple B4 backbone matching local training script
+        self.backbone = timm.create_model("efficientnet_b4", pretrained=False, num_classes=0)
+        self.classifier = nn.Sequential(
+            nn.Linear(self.backbone.num_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(256, 1)
+        )
+    
+    def forward(self, x):
+        return self.classifier(self.backbone(x))
 
-def get_model():
-    global _model
-    if _model is not None:
-        return _model
-        
-    print(f"DEBUG: Checking Model Path: {MODEL_PATH}", flush=True)
-    if not MODEL_PATH.exists():
-        print(f"⚠️ Model not found at {MODEL_PATH}", flush=True)
-        return None
-        
-    print(f"DEBUG: Loading PyTorch Model from {MODEL_PATH}...", flush=True)
+# 3. Skin Disease Model (EfficientNet-B4)
+class SkinDiseaseModel(nn.Module):
+    def __init__(self, num_classes=38):
+        super().__init__()
+        self.backbone = timm.create_model("efficientnet_b4", pretrained=False, num_classes=0)
+        self.num_features = self.backbone.num_features
+        self.classifier = nn.Sequential(
+            nn.Linear(self.num_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(512, num_classes)
+        )
+
+    def forward(self, x):
+        features = self.backbone(x)
+        return self.classifier(features)
+
+# --- Resource Loading ---
+_eye_model = None
+_body_model = None
+_skin_model = None
+_skin_classes = {}
+
+def get_eye_model():
+    global _eye_model
+    if _eye_model: return _eye_model
+    path = BASE_DIR / "saved_models" / "jaundice_with_sclera_torch.pth"
+    if not path.exists(): return None
     try:
-        print("DEBUG: Initializing Architecture...", flush=True)
-        model = JaundiceModel()
-        print(f"DEBUG: Moving to device {DEVICE}...", flush=True)
-        model = model.to(DEVICE)
-        
-        print("DEBUG: Loading State Dict...", flush=True)
-        state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+        model = JaundiceModel().to(DEVICE)
+        state_dict = torch.load(path, map_location=DEVICE)
         model.load_state_dict(state_dict)
-        
-        print("DEBUG: Setting to Eval...", flush=True)
         model.eval()
-        _model = model
-        print("✅ Model loaded successfully.", flush=True)
-        return _model
+        _eye_model = model
+        print("✅ Eye Model Loaded (PyTorch)", flush=True)
+        return _eye_model
     except Exception as e:
-        print(f"❌ Error loading model: {e}", flush=True)
+        print(f"❌ Failed to load Eye Model: {e}", flush=True)
+        return None
+
+def get_body_model():
+    global _body_model
+    if _body_model: return _body_model
+    path = BASE_DIR / "saved_models" / "jaundice_body_pytorch.pth"
+    if not path.exists(): return None
+    try:
+        model = JaundiceBodyModel().to(DEVICE)
+        state_dict = torch.load(path, map_location=DEVICE)
+        model.load_state_dict(state_dict)
+        model.eval()
+        _body_model = model
+        print("✅ Body Model Loaded (PyTorch)", flush=True)
+        return _body_model
+    except Exception as e:
+        print(f"❌ Failed to load Body Model: {e}", flush=True)
+        return None
+
+def get_skin_model():
+    global _skin_model, _skin_classes
+    if _skin_model: return _skin_model
+    
+    model_path = BASE_DIR / "saved_models" / "skin_disease_pytorch.pth"
+    map_path = BASE_DIR / "saved_models" / "skin_disease_mapping.json"
+    
+    if not model_path.exists() or not map_path.exists(): 
+        print(f"⚠️ Skin model files missing: {model_path} or {map_path}", flush=True)
+        return None
+    
+    try:
+        # Load mapping first
+        with open(map_path, 'r') as f:
+            raw_map = json.load(f)
+            
+        # Ensure mapping is int -> string
+        # Some JSON libs load '0' as string key. We need int keys for lookup if we predict by index.
+        # But wait - usually we just get argmax index.
+        # Let's handle both { "0": "Acne" } and { "Acne": 0 }
+        
+        # Heuristic: if values are ints, it's {Class: Index}. Invert it.
+        first_val = list(raw_map.values())[0]
+        if isinstance(first_val, int):
+            _skin_classes = {v: k for k, v in raw_map.items()}
+        else:
+            # It's {"0": "Acne"}. Convert keys to int.
+            _skin_classes = {int(k): v for k, v in raw_map.items()}
+            
+        num_classes = len(_skin_classes)
+        
+        model = SkinDiseaseModel(num_classes=num_classes).to(DEVICE)
+        state_dict = torch.load(model_path, map_location=DEVICE)
+        model.load_state_dict(state_dict)
+        model.eval()
+        _skin_model = model
+        print(f"✅ Skin Model Loaded (PyTorch) - {num_classes} classes", flush=True)
+        return _skin_model
+    except Exception as e:
+        print(f"❌ Failed to load Skin Model: {e}", flush=True)
         import traceback
         traceback.print_exc()
         return None
 
-def predict_jaundice(skin_img, sclera_crop=None):
-    """
-    skin_img: BGR numpy array
-    sclera_crop: BGR numpy array (optional, will be black if None)
-    """
-    model = get_model()
-    if model is None:
-        return "Model Missing", 0.0
-        
-    # Preprocess Skin
-    skin_resized = cv2.resize(skin_img, IMG_SIZE)
-    skin_rgb = cv2.cvtColor(skin_resized, cv2.COLOR_BGR2RGB)
-    skin_tensor = torch.from_numpy(skin_rgb).permute(2, 0, 1).float() / 255.0
-    skin_tensor = skin_tensor.unsqueeze(0).to(DEVICE) # (1, 3, 380, 380)
+# --- Prediction Functions ---
+
+def _preprocess_img(img_bgr, size=(380,380)):
+    """Standard EfficientNet preprocessing: Resize -> RGB -> Normalize -> Tensor"""
+    # Resize
+    img_resized = cv2.resize(img_bgr, size)
+    # BGR -> RGB
+    img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
     
-    # Preprocess Sclera
+    # Normalize (Manual implementation instead of torchvision transforms to keep inference light)
+    # Mean: [0.485, 0.456, 0.406], Std: [0.229, 0.224, 0.225]
+    img_float = img_rgb.astype(np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    
+    img_norm = (img_float - mean) / std
+    
+    # HWC -> CHW
+    img_chw = np.transpose(img_norm, (2, 0, 1))
+    
+    # Batch dim
+    img_batch = np.expand_dims(img_chw, axis=0)
+    
+    return torch.tensor(img_batch, dtype=torch.float32).to(DEVICE)
+
+def predict_jaundice_eye(skin_img, sclera_crop=None):
+    model = get_eye_model()
+    if not model: return "Model Missing", 0.0
+    
+    # Preprocess Skin
+    skin_t = _preprocess_img(skin_img, size=IMG_SIZE)
+    
+    # Preprocess Sclera (64x64)
     if sclera_crop is None or sclera_crop.size == 0:
         sclera_crop = np.zeros((*SCLERA_SIZE, 3), dtype=np.uint8)
     else:
         sclera_crop = cv2.resize(sclera_crop, SCLERA_SIZE)
         
     sclera_rgb = cv2.cvtColor(sclera_crop, cv2.COLOR_BGR2RGB)
-    sclera_tensor = torch.from_numpy(sclera_rgb).permute(2, 0, 1).float() / 255.0
-    sclera_tensor = sclera_tensor.unsqueeze(0).to(DEVICE) # (1, 3, 64, 64)
-    
-    # Inference
+    sclera_float = sclera_rgb.astype(np.float32) / 255.0
+    # Sclera branch training used simple /255.0 usually, but let's assume standard norm for now if based on generic logic
+    # Actually, the eye model training used standard Norm.
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    sclera_norm = (sclera_float - mean) / std
+    sclera_chw = np.transpose(sclera_norm, (2, 0, 1))
+    sclera_t = torch.tensor(np.expand_dims(sclera_chw, axis=0), dtype=torch.float32).to(DEVICE)
+        
     with torch.no_grad():
-        logits = model(skin_tensor, sclera_tensor)
+        logits = model(skin_t, sclera_t)
         prob = torch.sigmoid(logits).item()
         
     label = "Jaundice" if prob > 0.5 else "Normal"
-    # Confidence: distance from 0.5
-    confidence = prob if prob > 0.5 else 1.0 - prob
+    # Confidence: distance from 0.5 mapped to 0.5-1.0 range
+    conf = prob if prob > 0.5 else 1.0 - prob
+    return label, conf
+
+def predict_jaundice_body(img_bgr):
+    model = get_body_model()
+    if not model: return "Model Missing", 0.0
     
-    return label, confidence
+    img_t = _preprocess_img(img_bgr, size=IMG_SIZE)
+    with torch.no_grad():
+        logits = model(img_t)
+        prob = torch.sigmoid(logits).item()
+    
+    label = "Jaundice" if prob > 0.5 else "Normal"
+    conf = prob if prob > 0.5 else 1.0 - prob
+    return label, conf
+
+def predict_skin_disease_torch(img_bgr):
+    model = get_skin_model()
+    if not model: return "Model Missing", 0.0
+    
+    img_t = _preprocess_img(img_bgr, size=IMG_SIZE)
+    with torch.no_grad():
+        logits = model(img_t)
+        probs = torch.softmax(logits, dim=1)
+        conf, idx = torch.max(probs, 1)
+        
+    idx = idx.item()
+    conf = conf.item()
+    label = _skin_classes.get(idx, f"Unknown Class {idx}")
+    return label, conf

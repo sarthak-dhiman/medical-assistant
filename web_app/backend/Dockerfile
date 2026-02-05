@@ -1,8 +1,7 @@
-# Base Image with CUDA support for TensorFlow
-FROM tensorflow/tensorflow:latest-gpu
+# Base Image with PyTorch + CUDA 12.1
+FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
 
-# System Dependencies (OpenCV + Glib + Curl for Healthcheck)
-# Note: tensorflow:latest-gpu is based on Ubuntu, apt-get works.
+# System Dependencies (OpenCV + Glib + Curl)
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -16,14 +15,12 @@ WORKDIR /app
 COPY web_app/backend/requirements_web.txt .
 RUN pip install --no-cache-dir -r requirements_web.txt
 
-# Force Cache Bust to ensure updated inference scripts are copied
-ENV CACHEBUST=1
-
+# Force Cache Bust
+ENV CACHEBUST=2
 
 # Copy Root-Level Inference Scripts
+# NOTE: inference.py and inference_skin.py were redundant and deleted
 COPY segformer_utils.py .
-COPY inference.py .
-COPY inference_skin.py .
 COPY inference_pytorch.py .
 # COPY saved_models/ ./saved_models/ # We will mount this via Volume for speed
 

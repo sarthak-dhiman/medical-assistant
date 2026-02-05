@@ -23,7 +23,7 @@ services:
       # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - TF_ENABLE_ONEDNN_OPTS=0
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
       resources:
         reservations:
@@ -58,7 +58,6 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - OMP_NUM_THREADS=4
-      - TF_ENABLE_ONEDNN_OPTS=0
     deploy:
       resources:
         reservations:

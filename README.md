@@ -9,60 +9,28 @@ The system features a **FastAPI** backend for high-performance inference and a *
 
 ---
 
-## 🧠 AI Models
+## 🧠 AI Models (Unified PyTorch Architecture)
+
+All models now use **EfficientNet-B4** via PyTorch for maximum accuracy and unified GPU memory management.
 
 ### Skin Disease Detection Model
-*   **Architecture**: EfficientNetB0 (Transfer Learning)
-*   **Backend**: Keras (TensorFlow/PyTorch)
-*   **Input**: 224x224 RGB Images
-*   **Training Status**: Trained on a massive merged dataset of ~32,000 images.
-*   **Classes (38 Types)**:
-    *   Acne
-    *   Actinic Keratosis
-    *   Atopic Dermatitis
-    *   Benign Tumors
-    *   Bullous
-    *   Candidiasis
-    *   Cellulitis Impetigo
-    *   Contact Dermatitis
-    *   Drug Eruption
-    *   Dry Skin
-    *   Eczema
-    *   Herpes HPV STD
-    *   Infestations Bites
-    *   Lichen
-    *   Lupus
-    *   Moles
-    *   Monkeypox
-    *   Normal
-    *   Oily Skin
-    *   Perioral Dermatitis
-    *   Pigment Disorders
-    *   Psoriasis
-    *   Rosacea
-    *   Scabies
-    *   Sebaceous Glands
-    *   Seborrheic Keratoses
-    *   Seborrheic Dermatitis
-    *   Skin Cancer
-    *   Sun Sunlight Damage
-    *   Systemic Disease
-    *   TineaS
-    *   Tinea Fungal
-    *   Unknown Normal
-    *   Urticaria Hives
-    *   Vascular Tumors
-    *   Vasculitis
-    *   Vitiligo
-    *   Warts
+*   **Architecture**: EfficientNet-B4 (PyTorch)
+*   **Training Hardware**: Google Colab TPU v5e-1 (High Performance)
+*   **Input**: 380x380 RGB Images (High Res)
+*   **Classes**: 38 Categories
+*   **Status**: Migrated from Keras B0 to PyTorch B4 for superior accuracy.
 
-### Jaundice Detection (Combined)
-*   **Approach**: Multi-Input Model
-*   **Input A (Skin)**: Facial skin analysis for yellow discoloration.
-*   **Input B (Sclera)**: **SegFormer** model extracts the sclera (white part of the eye) to analyze pixel color values (yellow vs white ratio).
-*   **Classes**:
-    *   Jaundice
-    *   Normal
+### Jaundice Body Detection
+*   **Architecture**: EfficientNet-B4 (PyTorch)
+*   **Training Hardware**: Local RTX 3050 GPU
+*   **Input**: 380x380 RGB Images
+*   **Focus**: Analyzes skin tone for bilirubin-induced yellowing.
+*   **Status**: Migrated to PyTorch to share VRAM with Eye model.
+
+### Jaundice Eye Detection
+*   **Architecture**: EfficientNet-B4 (PyTorch) / SegFormer
+*   **Approach**: Sclera segmentation + Color Analysis
+*   **Status**: Stable and High Performance.
 
 ---
 

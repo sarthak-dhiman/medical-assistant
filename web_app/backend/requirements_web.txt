@@ -5,7 +5,6 @@ redis
 python-multipart
 requests
 opencv-python-headless
-tensorflow
 pillow
 transformers
 torch

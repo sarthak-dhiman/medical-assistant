@@ -18,12 +18,12 @@ skin_disease_model = None
 init_errors = [] # Persistent global errors
 
 def load_models():
-    """Loads models once per worker process."""
+    """Loads models once per worker process (Unified PyTorch Engine)."""
     global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model, init_errors
     
-    # Do not clear global errors if they exist, but only try loading missing models
     temp_errors = []
     
+    # 0. SegFormer (Segmentation)
     if seg_model is None:
         try:
             from segformer_utils import SegFormerWrapper
@@ -34,69 +34,46 @@ def load_models():
             print(err_msg)
             temp_errors.append(err_msg)
             
+    # 1. Jaundice Eye Model (PyTorch)
     if jaundice_eye_model is None:
         try:
-            from inference_pytorch import predict_jaundice, get_model
+            from inference_pytorch import predict_jaundice_eye
             print("Warming Jaundice Eye Model (PyTorch)...")
-            # Load the raw model to verify it exists and is on GPU
-            raw_model = get_model()
-            if raw_model is None:
-                raise Exception("PyTorch Model File Missing")
-            
-            # Store the WRAPPER function for prediction
-            jaundice_eye_model = predict_jaundice 
-            
-            # Warm up with dummy data
-            print("Warming up PyTorch model...")
-            jaundice_eye_model(np.zeros((380,380,3), dtype=np.uint8), np.zeros((64,64,3), dtype=np.uint8))
-            
-            print("✅ Jaundice Eye Model Ready (PyTorch on GPU)", flush=True) 
+            # Warm up
+            predict_jaundice_eye(np.zeros((380,380,3), dtype=np.uint8), np.zeros((64,64,3), dtype=np.uint8))
+            jaundice_eye_model = predict_jaundice_eye
+            print("✅ Jaundice Eye Model Ready") 
         except Exception as e:
-            err_msg = f"Failed to load Jaundice Eye Logic: {e}"
+            err_msg = f"Failed to load Jaundice Eye: {e}"
             print(err_msg)
-            errors.append(err_msg)
+            temp_errors.append(err_msg)
 
+    # 2. Jaundice Body Model (PyTorch) - Replaces Keras
     if jaundice_skin_model is None:
         try:
-            from inference import predict_frame
-            print("Warming Jaundice Skin Model (Keras)...")
-            # Test load
-            try:
-                test_result = predict_frame(np.zeros((224, 224, 3), dtype=np.uint8))
-                jaundice_skin_model = predict_frame
-                print(f"✅ Jaundice Skin Model Ready: {test_result}")
-            except Exception as load_err:
-                print(f"⚠️ Jaundice Skin Model has architecture mismatch: {load_err}")
-                def jaundice_model_error(img):
-                    return "Model Architecture Mismatch (Needs Retraining)", 0.0
-                jaundice_skin_model = jaundice_model_error
+            from inference_pytorch import predict_jaundice_body
+            print("Warming Jaundice Body Model (PyTorch)...")
+            predict_jaundice_body(np.zeros((380, 380, 3), dtype=np.uint8))
+            jaundice_skin_model = predict_jaundice_body
+            print("✅ Jaundice Body Model Ready")
         except Exception as e:
-            err_msg = f"Failed to load Jaundice Skin Logic: {e}"
+            err_msg = f"Failed to load Jaundice Body: {e}"
             print(err_msg)
             temp_errors.append(err_msg)
 
+    # 3. Skin Disease Model (PyTorch) - Replaces Keras
     if skin_disease_model is None:
         try:
-            from inference_skin import predict_skin_disease
-            print("Warming Skin Disease Model (Keras)...")
-            # Test load - if this fails, catch it gracefully
-            try:
-                test_result = predict_skin_disease(np.zeros((224, 224, 3), dtype=np.uint8))
-                skin_disease_model = predict_skin_disease
-                print(f"✅ Skin Disease Model Ready: {test_result}")
-            except Exception as load_err:
-                print(f"⚠️ Skin Disease Model has architecture mismatch: {load_err}")
-                print("   This model needs to be retrained with RGB input (3 channels)")
-                # Set to a dummy function that returns error
-                def skin_model_error(img):
-                    return "Model Architecture Mismatch (Needs Retraining)", 0.0
-                skin_disease_model = skin_model_error
+            from inference_pytorch import predict_skin_disease_torch
+            print("Warming Skin Disease Model (PyTorch)...")
+            predict_skin_disease_torch(np.zeros((380, 380, 3), dtype=np.uint8))
+            skin_disease_model = predict_skin_disease_torch
+            print("✅ Skin Disease Model Ready")
         except Exception as e:
-            err_msg = f"Failed to load Skin Disease Logic: {e}"
+            err_msg = f"Failed to load Skin Disease: {e}"
             print(err_msg)
             temp_errors.append(err_msg)
             
-    # Append new errors to global persistent list
     for err in temp_errors:
         if err not in init_errors:
             init_errors.append(err)
