@@ -1,6 +1,14 @@
 const ResultDisplay = ({ result, mode, isNerdMode }) => {
     if (!result) return null;
 
+    if (result.status === 'error') {
+        return (
+            <div className="absolute top-24 left-1/2 transform -translate-x-1/2 bg-red-900/80 border border-red-500 text-white px-4 py-2 rounded-lg backdrop-blur-sm flex items-center gap-2 shadow-lg z-50">
+                <span className="text-xs font-bold font-mono">⚠️ {result.error}</span>
+            </div>
+        );
+    }
+
     // Check for warnings (e.g. Blurry Image / Fallback Mode)
     // We check if ANY eye has a warning
     const warning = result.eyes?.find(e => e.warning)?.warning;
@@ -41,7 +49,7 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                     {bbox && (
                         <Box
                             x1={bbox[0]} y1={bbox[1]} x2={bbox[2]} y2={bbox[3]}
-                            label={result.label}
+                            label={(result.label || '').replace(/unknown_normal/gi, 'Normal')}
                             conf={result.confidence}
                             color={(result.label || '').includes('Jaundice') ? 'border-red-500' : 'border-green-500'}
                         />

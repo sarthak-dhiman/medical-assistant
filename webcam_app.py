@@ -364,11 +364,45 @@ def main():
 
         cv2.imshow("Medical Assistant (Unified 3-Model)", final_display)
 
-        keys = cv2.waitKey(1) & 0xFF
+        keys = cv2.waitKey(1) & 0xFF 
         if keys == ord('q'): 
             break
         elif keys == ord('m'): 
-            mode_idx = (mode_idx + 1) % len(modes)
+            next_mode_idx = (mode_idx + 1) % len(modes)
+            next_mode = modes[next_mode_idx]
+            
+            # --- SHOW LOADING SCREEN ---
+            # Create a loading overlay
+            loading_frame = final_display.copy()
+            lh, lw = loading_frame.shape[:2]
+            overlay = loading_frame.copy()
+            cv2.rectangle(overlay, (0, 0), (lw, lh), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.7, loading_frame, 0.3, 0, loading_frame)
+            
+            # Text
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            text = f"Switching to {next_mode}..."
+            text_size = cv2.getTextSize(text, font, 1.0, 2)[0]
+            text_x = (lw - text_size[0]) // 2
+            text_y = (lh - text_size[1]) // 2
+            cv2.putText(loading_frame, text, (text_x, text_y), font, 1.0, (255, 255, 255), 2)
+            
+            # Progress Bar (Simulated)
+            bar_w, bar_h = 400, 20
+            bar_x = (lw - bar_w) // 2
+            bar_y = text_y + 40
+            cv2.rectangle(loading_frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (100, 100, 100), 2)
+            
+            # Animate Bar slightly
+            for i in range(1, 11):
+               temp_frame = loading_frame.copy()
+               fill_w = int(bar_w * (i/10.0))
+               cv2.rectangle(temp_frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), (0, 255, 0), -1)
+               cv2.imshow("Medical Assistant (Unified 3-Model)", temp_frame)
+               cv2.waitKey(20) # 20ms * 10 = 200ms visual transition
+            
+            # Actual Switch
+            mode_idx = next_mode_idx
             print(f"Switched Mode to: {modes[mode_idx]}")
         elif keys == ord('u'): # Upload Image
             file_path = filedialog.askopenfilename(

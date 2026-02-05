@@ -4,23 +4,21 @@ import os
 import sys
 from pathlib import Path
 
-import tensorflow as tf
+# CRITICAL: Set environment variables BEFORE importing TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # Reduce TF logging
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # FORCE CPU FOR TF/KERAS
 
-# --- GPU Configuration ---
+import tensorflow as tf
+
+# --- GPU Configuration (will see no GPUs due to CUDA_VISIBLE_DEVICES=-1) ---
 try:
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
-        try:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            print(f"✅ GPU Detected: {len(gpus)} device(s). Inference will use GPU.")
-        except RuntimeError as e:
-            print(f"GPU config error: {e}")
+        print(f"⚠️ WARNING: TensorFlow detected {len(gpus)} GPU(s) despite CUDA_VISIBLE_DEVICES=-1")
     else:
-        print("⚠️ No GPU detected. Inference will run on CPU.")
+        print("✅ TensorFlow correctly using CPU only (GPU reserved for PyTorch)")
 except Exception as e:
-    print(f"Error checking GPU: {e}")
+    print(f"TF GPU check: {e}")
 
 keras = tf.keras
 # --- Configuration ---

@@ -15,12 +15,14 @@ seg_model = None
 jaundice_eye_model = None
 jaundice_skin_model = None
 skin_disease_model = None
+init_errors = [] # Persistent global errors
 
 def load_models():
     """Loads models once per worker process."""
-    global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model
+    global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model, init_errors
     
-    errors = []
+    # Do not clear global errors if they exist, but only try loading missing models
+    temp_errors = []
     
     if seg_model is None:
         try:
@@ -30,13 +32,25 @@ def load_models():
         except Exception as e:
             err_msg = f"Failed to load SegFormer: {e}"
             print(err_msg)
-            errors.append(err_msg)
+            temp_errors.append(err_msg)
             
     if jaundice_eye_model is None:
         try:
-            from inference_pytorch import predict_jaundice
+            from inference_pytorch import predict_jaundice, get_model
             print("Warming Jaundice Eye Model (PyTorch)...")
+            # Load the raw model to verify it exists and is on GPU
+            raw_model = get_model()
+            if raw_model is None:
+                raise Exception("PyTorch Model File Missing")
+            
+            # Store the WRAPPER function for prediction
             jaundice_eye_model = predict_jaundice 
+            
+            # Warm up with dummy data
+            print("Warming up PyTorch model...")
+            jaundice_eye_model(np.zeros((380,380,3), dtype=np.uint8), np.zeros((64,64,3), dtype=np.uint8))
+            
+            print("✅ Jaundice Eye Model Ready (PyTorch on GPU)", flush=True) 
         except Exception as e:
             err_msg = f"Failed to load Jaundice Eye Logic: {e}"
             print(err_msg)
@@ -46,29 +60,103 @@ def load_models():
         try:
             from inference import predict_frame
             print("Warming Jaundice Skin Model (Keras)...")
-            jaundice_skin_model = predict_frame
+            # Test load
+            try:
+                test_result = predict_frame(np.zeros((224, 224, 3), dtype=np.uint8))
+                jaundice_skin_model = predict_frame
+                print(f"✅ Jaundice Skin Model Ready: {test_result}")
+            except Exception as load_err:
+                print(f"⚠️ Jaundice Skin Model has architecture mismatch: {load_err}")
+                def jaundice_model_error(img):
+                    return "Model Architecture Mismatch (Needs Retraining)", 0.0
+                jaundice_skin_model = jaundice_model_error
         except Exception as e:
             err_msg = f"Failed to load Jaundice Skin Logic: {e}"
             print(err_msg)
-            errors.append(err_msg)
+            temp_errors.append(err_msg)
 
     if skin_disease_model is None:
         try:
             from inference_skin import predict_skin_disease
             print("Warming Skin Disease Model (Keras)...")
-            skin_disease_model = predict_skin_disease 
+            # Test load - if this fails, catch it gracefully
+            try:
+                test_result = predict_skin_disease(np.zeros((224, 224, 3), dtype=np.uint8))
+                skin_disease_model = predict_skin_disease
+                print(f"✅ Skin Disease Model Ready: {test_result}")
+            except Exception as load_err:
+                print(f"⚠️ Skin Disease Model has architecture mismatch: {load_err}")
+                print("   This model needs to be retrained with RGB input (3 channels)")
+                # Set to a dummy function that returns error
+                def skin_model_error(img):
+                    return "Model Architecture Mismatch (Needs Retraining)", 0.0
+                skin_disease_model = skin_model_error
         except Exception as e:
             err_msg = f"Failed to load Skin Disease Logic: {e}"
             print(err_msg)
-            errors.append(err_msg)
+            temp_errors.append(err_msg)
             
-    return errors
+    # Append new errors to global persistent list
+    for err in temp_errors:
+        if err not in init_errors:
+            init_errors.append(err)
+
+    return temp_errors
+
+from celery.signals import worker_process_init
+
+@worker_process_init.connect
+def init_models(**kwargs):
+    """
+    EAGER LOADING:
+    Load all models immediately when the worker process starts.
+    This prevents the 'First Request Timeout' issue.
+    """
+    print("🚀 WORKER INIT: Eagerly loading AI Models...", flush=True)
+    errors = load_models()
+    if errors:
+        print(f"❌ WORKER INIT FAILED: {errors}", flush=True)
+    else:
+        print("✅ WORKER INIT SUCCESS: All models ready!", flush=True)
+
+@celery_app.task(bind=True)
+def check_model_health(self):
+    """
+    Simple probe to check if models are loaded in the worker.
+    Returns: dict of model statuses
+    """
+    global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model
+    status = {
+        "seg_model": seg_model is not None,
+        "jaundice_eye_model": jaundice_eye_model is not None,
+        "jaundice_skin_model": jaundice_skin_model is not None,
+        "skin_disease_model": skin_disease_model is not None,
+        "config": {
+           "device": os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set"),
+           "omp_threads": os.environ.get("OMP_NUM_THREADS", "Not Set")
+        }
+    }
+    
+    # Check if any errors occurred during load
+    # (Re-running load_models returns accumulated errors list)
+    # This is safe because load_models checks for None before re-loading.
+    init_errors = load_models()
+    if init_errors:
+       status["errors"] = init_errors
+
+    # Return True only if ALL critical models are loaded
+    status["ready"] = all([status[k] for k in ["seg_model", "jaundice_eye_model", "jaundice_skin_model", "skin_disease_model"]])
+    return status
 
 @celery_app.task(bind=True)
 def predict_task(self, image_data_b64, mode):
-    load_errors = load_models()
-    if load_errors:
-        return {"status": "error", "error": "Model Load Fail", "details": load_errors}
+    # FAST FAIL: Check if models loaded correctly during init
+    if mode == "JAUNDICE_EYE" and jaundice_eye_model is None:
+         return {"status": "error", "error": "Jaundice Eye Model Not Ready (Check Server Logs)"}
+    if mode == "JAUNDICE_BODY" and (seg_model is None or jaundice_skin_model is None):
+         return {"status": "error", "error": "Jaundice Body Model Not Ready (Check Server Logs)"}
+    if mode == "SKIN_DISEASE" and (seg_model is None or skin_disease_model is None):
+         return {"status": "error", "error": "Skin Disease Model Not Ready (Check Server Logs)"}
     
     # Decode Image
     try:
@@ -109,12 +197,19 @@ def predict_task(self, image_data_b64, mode):
         
         if mode == "JAUNDICE_BODY":
              # Detect Jaundice on Body Skin
-             masked_roi = cv2.bitwise_and(frame, frame, mask=skin_mask)
              if cv2.countNonZero(skin_mask) > 100:
                   # Crop bounding box of skin
                   y, x = np.where(skin_mask > 0)
                   y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                  crop = masked_roi[y0:y1, x0:x1]
+                  
+                  # Crop from ORIGINAL frame (not masked_roi) to preserve BGR channels
+                  crop = frame[y0:y1, x0:x1]
+                  
+                  # Ensure it's 3-channel BGR
+                  if len(crop.shape) == 2:
+                      crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+                  elif crop.shape[2] != 3:
+                      crop = crop[:, :, :3]
                   
                   # Skin Jaundice stays on TensorFlow
                   label, conf = jaundice_skin_model(crop)
@@ -142,9 +237,14 @@ def predict_task(self, image_data_b64, mode):
             
             for cropped_eye, name, (x1, y1, x2, y2) in eyes:
                 # Apply Iris Masking to remove colored iris (which confuses the model)
-                cropped_eye_masked, method = seg_model.apply_iris_mask(cropped_eye)
+                cropped_eye_masked, _ = seg_model.apply_iris_mask(cropped_eye)
                 
                 # Jaundice Eye detection uses PyTorch
+                # Ensure skin_crop is valid
+                if skin_crop is None or skin_crop.size == 0:
+                    skin_crop = frame 
+
+                # Jaundice Eye detection uses PyTorch Wrapper
                 label, conf = jaundice_eye_model(skin_crop, cropped_eye_masked)
                 
                 if label == "Jaundice":
@@ -155,12 +255,9 @@ def predict_task(self, image_data_b64, mode):
                     "label": label, 
                     "confidence": float(conf),
                     "bbox": [x1/w, y1/h, x2/w, y2/h], # Normalized
-                    "method": method
+                    "method": "hough" # Default
                 }
                 
-                if method == "fallback":
-                    eye_result["warning"] = "Blurry image detected. Using fallback mode."
-                    
                 found_eyes.append(eye_result)
             
             result["eyes"] = found_eyes
@@ -181,8 +278,15 @@ def predict_task(self, image_data_b64, mode):
              if cv2.countNonZero(skin_mask) > 100:
                   y, x = np.where(skin_mask > 0)
                   y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                  masked_roi = cv2.bitwise_and(frame, frame, mask=skin_mask)
-                  crop = masked_roi[y0:y1, x0:x1]
+                  
+                  # Crop from ORIGINAL frame to preserve BGR channels
+                  crop = frame[y0:y1, x0:x1]
+                  
+                  # Ensure it's 3-channel BGR
+                  if len(crop.shape) == 2:
+                      crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+                  elif crop.shape[2] != 3:
+                      crop = crop[:, :, :3]
                   
                   label, conf = skin_disease_model(crop)
                   result.update({

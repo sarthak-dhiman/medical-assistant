@@ -17,7 +17,9 @@ else:
     BASE_DIR = Path(__file__).parent
 
 MODEL_PATH = BASE_DIR / "saved_models" / "jaundice_with_sclera_torch.pth"
+# AUTO DETECT GPU:
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"DEBUG: PyTorch will use device: {DEVICE}", flush=True)
 
 # --- Model Arch (Must Match Training) ---
 class JaundiceModel(nn.Module):
@@ -59,20 +61,31 @@ def get_model():
     if _model is not None:
         return _model
         
+    print(f"DEBUG: Checking Model Path: {MODEL_PATH}", flush=True)
     if not MODEL_PATH.exists():
-        print(f"⚠️ Model not found at {MODEL_PATH}")
+        print(f"⚠️ Model not found at {MODEL_PATH}", flush=True)
         return None
         
-    print(f"Loading PyTorch Model from {MODEL_PATH}...")
+    print(f"DEBUG: Loading PyTorch Model from {MODEL_PATH}...", flush=True)
     try:
-        model = JaundiceModel().to(DEVICE)
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+        print("DEBUG: Initializing Architecture...", flush=True)
+        model = JaundiceModel()
+        print(f"DEBUG: Moving to device {DEVICE}...", flush=True)
+        model = model.to(DEVICE)
+        
+        print("DEBUG: Loading State Dict...", flush=True)
+        state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+        model.load_state_dict(state_dict)
+        
+        print("DEBUG: Setting to Eval...", flush=True)
         model.eval()
         _model = model
-        print("✅ Model loaded successfully.")
+        print("✅ Model loaded successfully.", flush=True)
         return _model
     except Exception as e:
-        print(f"❌ Error loading model: {e}")
+        print(f"❌ Error loading model: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return None
 
 def predict_jaundice(skin_img, sclera_crop=None):

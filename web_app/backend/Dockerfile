@@ -1,10 +1,12 @@
-# Base Image
-FROM python:3.10-slim
+# Base Image with CUDA support for TensorFlow
+FROM tensorflow/tensorflow:latest-gpu
 
-# System Dependencies (OpenCV + Glib)
+# System Dependencies (OpenCV + Glib + Curl for Healthcheck)
+# Note: tensorflow:latest-gpu is based on Ubuntu, apt-get works.
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Workdir

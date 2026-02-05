@@ -20,3 +20,17 @@ body {
   min-width: 320px;
   min-height: 100vh;
 }
+
+@keyframes loading {
+  0% {
+    transform: scaleX(0);
+  }
+
+  50% {
+    transform: scaleX(0.7);
+  }
+
+  100% {
+    transform: scaleX(1);
+  }
+}

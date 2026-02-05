@@ -24,6 +24,25 @@ class PredictRequest(BaseModel):
 def read_root():
     return {"status": "online", "system": "Medical Assistant Backend"}
 
+@app.get("/health")
+async def health_check():
+    """
+    Check if AI Worker is ready and models are loaded.
+    """
+    from .tasks import check_model_health
+    try:
+        # Wait up to 2 seconds for worker response
+        # If worker is busy loading models, this might timeout initially
+        task = check_model_health.delay()
+        result = task.get(timeout=2.0)
+        
+        if result.get("ready"):
+            return {"status": "ready", "details": result}
+        else:
+            return {"status": "loading", "details": result}
+    except Exception as e:
+        return {"status": "not_ready", "error": str(e)}
+
 @app.post("/predict")
 async def predict_endpoint(request: PredictRequest):
     """

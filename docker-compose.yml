@@ -14,11 +14,29 @@ services:
       dockerfile: web_app/backend/Dockerfile
     ports:
       - "8000:8000"
+    command: uvicorn web_app.backend.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
       - ./web_app/backend:/app/web_app/backend # Dev code sync
     environment:
       - REDIS_URL=redis://redis:6379/0
+      # GPU Support Enabled
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TF_ENABLE_ONEDNN_OPTS=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
     depends_on:
       - redis
     networks:
@@ -29,14 +47,25 @@ services:
     build:
       context: .
       dockerfile: web_app/backend/Dockerfile
-    command: celery -A web_app.backend.celery_app worker --loglevel=info
+    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1
     volumes:
       - ./saved_models:/app/saved_models
       - ./web_app/backend:/app/web_app/backend
+      - hf_cache:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379/0
-      # Force CPU for stability inside Docker unless --gpus passed
-      - CUDA_VISIBLE_DEVICES=-1
+      # GPU Support Enabled
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - OMP_NUM_THREADS=4
+      - TF_ENABLE_ONEDNN_OPTS=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
     depends_on:
       - redis
     networks:
@@ -50,10 +79,15 @@ services:
     ports:
       - "5173:80" # Map host 5173 to container 80 (Nginx)
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - app-network
 
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  redis_data:
+  hf_cache:

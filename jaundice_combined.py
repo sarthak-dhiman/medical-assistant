@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 import keras
 from keras import mixed_precision
-from keras.preprocessing.image import ImageDataGenerator
+# FIX: ImageDataGenerator moved to tensorflow.keras in Keras 3.x
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from keras.applications import EfficientNetB0
 from keras.applications.efficientnet import preprocess_input
 from keras.layers import Dense, GlobalAveragePooling2D, Dropout

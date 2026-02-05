@@ -13,4 +13,4 @@ torchvision
 timm
 scikit-learn
 tqdm
---extra-index-url https://download.pytorch.org/whl/cpu
+# Removed CPU-only flag to allow CUDA version

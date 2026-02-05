@@ -14,6 +14,10 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
     const [fps, setFps] = useState(0)
     const [facingMode, setFacingMode] = useState("user")
 
+    // Ref to track the *current* active mode for avoiding stale responses
+    const latestModeRef = useRef(mode)
+    useEffect(() => { latestModeRef.current = mode }, [mode])
+
     // Toggle Camera Callback
     const toggleCamera = useCallback(() => {
         setFacingMode(prev => prev === "user" ? "environment" : "user")
@@ -70,6 +74,17 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
                 try {
                     const res = await axios.get(`${API_URL}/result/${task_id}`)
                     if (res.data.state === 'SUCCESS') {
+                        // PREVENT STALE UPDATES:
+                        if (mode !== latestModeRef.current) return;
+
+                        if (res.data.result && res.data.result.status === 'error') {
+                            setError(res.data.result.error);
+                            setResult(null);
+                            clearInterval(pollInterval);
+                            setIsProcessing(false);
+                            return;
+                        }
+
                         setResult(res.data.result)
                         clearInterval(pollInterval)
                         setIsProcessing(false)
@@ -81,10 +96,10 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
                         clearInterval(pollInterval)
                         setIsProcessing(false)
                         setError("Prediction Failed")
-                    } else if (pollAttempts > 60) { // Timeout
+                    } else if (pollAttempts > 600) { // Timeout after 120s
                         clearInterval(pollInterval)
                         setIsProcessing(false)
-                        setError("Timeout")
+                        setError("Timeout (Backend Slow)")
                     }
                 } catch (e) {
                     clearInterval(pollInterval)
@@ -103,24 +118,16 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
     // Auto-capture loop
     useEffect(() => {
         const interval = setInterval(() => {
+            // Only capture if NOT switching (unless switching takes too long)
             captureAndPredict()
         }, CAPTURE_INTERVAL)
         return () => clearInterval(interval)
     }, [captureAndPredict])
 
-    // Reset result when uploaded image changes (to force loading state)
-    // Reset logic
     useEffect(() => {
-        setResult(null);
+        setResult(null); // Clear previous result
         setError(null);
     }, [mode])
-
-    useEffect(() => {
-        if (uploadedImage) {
-            setResult(null);
-            // The loop will pick it up and running prediction
-        }
-    }, [uploadedImage])
 
     // Status Helper
     const getStatusText = () => {
@@ -129,6 +136,20 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
         if (isProcessing) return "PROCESSING";
         if (!result) return "WAITING...";
         return "IDLE";
+    }
+
+    // Dynamic Instructions
+    const getInstructions = () => {
+        switch (mode) {
+            case "JAUNDICE_EYE":
+                return "Come closer & remove glasses. Best for adults.";
+            case "JAUNDICE_BODY":
+                return "Ensure good lighting. Show face or skin clearly. Best for babies.";
+            case "SKIN_DISEASE":
+                return "Focus camera on affected area. Keep steady.";
+            default:
+                return "";
+        }
     }
 
     return (
@@ -206,16 +227,21 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
                     </div>
                 </div>
 
-                {/* Mode Indicator */}
-                <div className="absolute bottom-6 left-6">
-                    <h2 className="text-2xl font-bold text-white drop-shadow-lg">{mode.replace('_', ' ')}</h2>
+                {/* Instructions Removed (Moved to Sidebar) */}
+
+                {/* Mode Indicator & Instructions */}
+                <div className="absolute bottom-6 left-6 transition-all duration-300">
+                    <h2 className="text-2xl font-bold text-white drop-shadow-lg">
+                        {mode.replace('_', ' ')}
+                    </h2>
+
                     {result && (
-                        <div className="mt-2 bg-black/70 backdrop-blur-md rounded-xl p-3 border border-white/10 max-w-sm">
+                        <div className="mt-2 bg-black/70 backdrop-blur-md rounded-xl p-3 border border-white/10 max-w-sm animate-in fade-in slide-in-from-bottom-4 duration-500">
                             <p className="text-gray-300 text-sm">Latest Result:</p>
                             <p className={`text-lg font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
                                 ? 'text-red-400' : 'text-green-400'
                                 }`}>
-                                {result.label || 'Analyzing...'}
+                                {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}
                                 <span className="ml-2 text-sm opacity-75">
                                     {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
                                 </span>
