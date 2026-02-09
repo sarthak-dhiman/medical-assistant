@@ -1,16 +1,30 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import base64
+import logging
+import sys
 from .celery_app import celery_app
 from .tasks import predict_task
+from .config import settings
+
+# --- Logging Setup ---
+logging.basicConfig(
+    stream=sys.stdout,
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Medical Assistant API")
 
-# CORS
+# --- CORS ---
+origins = ["*"] if settings.ALLOW_ALL_ORIGINS else settings.ALLOWED_ORIGINS
+logger.info(f"CORS Allowed Origins: {origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For dev, limit in prod
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,6 +33,17 @@ app.add_middleware(
 class PredictRequest(BaseModel):
     image: str # Base64 encoded image
     mode: str  # JAUNDICE_BODY, JAUNDICE_EYE, SKIN_DISEASE
+
+    @validator('image')
+    def validate_image(cls, v):
+        if not v:
+            raise ValueError('Image data is empty')
+        
+        # Check size (rough estimate: len(base64) * 0.75 = bytes w/o headers)
+        # Header is usually "data:image/jpeg;base64," (~23 chars)
+        if len(v) > (settings.MAX_IMAGE_SIZE_BYTES * 1.37): # approx base64 size limit
+             raise ValueError(f'Image size exceeds limit of {settings.MAX_IMAGE_SIZE_BYTES/1024/1024}MB')
+        return v
 
 @app.get("/")
 def read_root():
@@ -36,12 +61,12 @@ async def health_check():
         task = check_model_health.delay()
         result = task.get(timeout=2.0)
         
-        
         if result.get("ready"):
             return {"status": "ready", "models_ready": True, "details": result}
         else:
             return {"status": "loading", "models_ready": False, "details": result}
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         return {"status": "not_ready", "models_ready": False, "error": str(e)}
 
 @app.post("/predict")
@@ -50,13 +75,14 @@ async def predict_endpoint(request: PredictRequest):
     Enqueue an image for prediction.
     Returns a Task ID.
     """
-    if not request.image:
-        raise HTTPException(status_code=400, detail="No image provided")
-        
     # Enqueue task
-    task = predict_task.delay(request.image, request.mode)
-    
-    return {"task_id": task.id, "status": "processing"}
+    try:
+        task = predict_task.delay(request.image, request.mode)
+        logger.info(f"Task enqueued: {task.id} (Mode: {request.mode})")
+        return {"task_id": task.id, "status": "processing"}
+    except Exception as e:
+        logger.error(f"Failed to enqueue task: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/result/{task_id}")
 async def get_result(task_id: str):

@@ -18,16 +18,21 @@ services:
     volumes:
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
       - ./web_app/backend:/app/web_app/backend # Dev code sync
+      # Mount __init__.py to ensure web_app is treated as a package
+      - ./web_app/__init__.py:/app/web_app/__init__.py
       - ./segformer_utils.py:/app/segformer_utils.py # Mount root files
       - ./inference_pytorch.py:/app/inference_pytorch.py
     environment:
       - REDIS_URL=redis://redis:6379/0
+      # Security: Allow frontend access
+      - ALLOWED_ORIGINS=http://localhost:5173
       # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
       resources:
+        limits:
+          memory: 4G
         reservations:
           devices:
             - driver: nvidia
@@ -35,6 +40,7 @@ services:
               capabilities: [ gpu ]
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+
       interval: 30s
       timeout: 10s
       retries: 5
@@ -53,6 +59,8 @@ services:
     volumes:
       - ./saved_models:/app/saved_models
       - ./web_app/backend:/app/web_app/backend
+      # Mount __init__.py to ensure web_app is treated as a package
+      - ./web_app/__init__.py:/app/web_app/__init__.py
       - ./segformer_utils.py:/app/segformer_utils.py
       - ./inference_pytorch.py:/app/inference_pytorch.py
       - hf_cache:/root/.cache/huggingface

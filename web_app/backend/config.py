@@ -1,20 +1,26 @@
 import os
-from pathlib import Path
 
-# Base Paths
-BACKEND_DIR = Path(__file__).parent
-PROJECT_ROOT = BACKEND_DIR.parent.parent
-MODEL_DIR = PROJECT_ROOT / "saved_models"
-
-# Redis
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-# Models
-JAUNDICE_MODEL_PATH = MODEL_DIR / "jaundice_model.keras"
-SKIN_MODEL_PATH = MODEL_DIR / "_skin_model.keras"
-SKIN_MAPPING_PATH = MODEL_DIR / "new_class_indices.json"
-SEGFORMER_PATH = MODEL_DIR / "segformer"
-
-# App
-API_HOST = "0.0.0.0"
-API_PORT = 8000
+class Config:
+    # --- Infrastructure ---
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    
+    # --- Security ---
+    # Default to localhost for dev, allow override via env
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+    # If explicitly set to "*" via env, allow all
+    ALLOW_ALL_ORIGINS = os.getenv("ALLOW_ALL_ORIGINS", "False").lower() == "true"
+    
+    # --- Models ---
+    # Centralized paths
+    MODEL_DIR = os.getenv("MODEL_DIR", "saved_models")
+    JAUNDICE_MODEL_PATH = os.path.join(MODEL_DIR, "jaundice_model.pth")
+    # ... add others as needed
+    
+    # --- Logging ---
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+    
+    # --- Performance ---
+    # Max image size (e.g. 10MB)
+    MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+    
+settings = Config()

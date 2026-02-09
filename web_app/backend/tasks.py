@@ -3,11 +3,17 @@ import os
 import cv2
 import numpy as np
 import base64
+import logging
 from pathlib import Path
 from .celery_app import celery_app
-from .config import PROJECT_ROOT
+from .config import settings
+
+# --- Logging Setup ---
+logger = logging.getLogger(__name__)
 
 # Ensure project root is in path to import original scripts
+# (Using settings.PROJECT_ROOT if available, else relative)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
 # Lazy Global Models
@@ -27,58 +33,58 @@ def load_models():
     if seg_model is None:
         try:
             from segformer_utils import SegFormerWrapper
-            print("Loading SegFormer...")
+            logger.info("Loading SegFormer...")
             seg_model = SegFormerWrapper()
         except Exception as e:
             err_msg = f"Failed to load SegFormer: {e}"
-            print(err_msg)
+            logger.error(err_msg)
             temp_errors.append(err_msg)
             
     # 1. Jaundice Eye Model (PyTorch)
     if jaundice_eye_model is None:
         try:
             from inference_pytorch import predict_jaundice_eye
-            print("Warming Jaundice Eye Model (PyTorch)...")
+            logger.info("Warming Jaundice Eye Model (PyTorch)...")
             # Warm up with actual inference to initialize CUDA kernels
             dummy_skin = np.zeros((380,380,3), dtype=np.uint8)
             dummy_sclera = np.zeros((64,64,3), dtype=np.uint8)
             for _ in range(3):  # Run 3 times to ensure JIT compilation
                 predict_jaundice_eye(dummy_skin, dummy_sclera)
             jaundice_eye_model = predict_jaundice_eye
-            print("✅ Jaundice Eye Model Ready") 
+            logger.info("✅ Jaundice Eye Model Ready") 
         except Exception as e:
             err_msg = f"Failed to load Jaundice Eye: {e}"
-            print(err_msg)
+            logger.error(err_msg)
             temp_errors.append(err_msg)
             
     # 2. Jaundice Body Model (PyTorch) - Replaces Keras
     if jaundice_skin_model is None:
         try:
             from inference_pytorch import predict_jaundice_body
-            print("Warming Jaundice Body Model (PyTorch)...")
+            logger.info("Warming Jaundice Body Model (PyTorch)...")
             dummy_img = np.zeros((380, 380, 3), dtype=np.uint8)
             for _ in range(3):  # Run 3 times to ensure JIT compilation
                 predict_jaundice_body(dummy_img)
             jaundice_skin_model = predict_jaundice_body
-            print("✅ Jaundice Body Model Ready")
+            logger.info("✅ Jaundice Body Model Ready")
         except Exception as e:
             err_msg = f"Failed to load Jaundice Body: {e}"
-            print(err_msg)
+            logger.error(err_msg)
             temp_errors.append(err_msg)
 
     # 3. Skin Disease Model (PyTorch) - Replaces Keras
     if skin_disease_model is None:
         try:
             from inference_pytorch import predict_skin_disease_torch
-            print("Warming Skin Disease Model (PyTorch)...")
+            logger.info("Warming Skin Disease Model (PyTorch)...")
             dummy_img = np.zeros((380, 380, 3), dtype=np.uint8)
             for _ in range(3):  # Run 3 times to ensure JIT compilation
                 predict_skin_disease_torch(dummy_img)
             skin_disease_model = predict_skin_disease_torch
-            print("✅ Skin Disease Model Ready")
+            logger.info("✅ Skin Disease Model Ready")
         except Exception as e:
             err_msg = f"Failed to load Skin Disease: {e}"
-            print(err_msg)
+            logger.error(err_msg)
             temp_errors.append(err_msg)
             
     for err in temp_errors:
@@ -96,12 +102,12 @@ def init_models(**kwargs):
     Load all models immediately when the worker process starts.
     This prevents the 'First Request Timeout' issue.
     """
-    print("🚀 WORKER INIT: Eagerly loading AI Models...", flush=True)
+    logger.info("🚀 WORKER INIT: Eagerly loading AI Models...")
     errors = load_models()
     if errors:
-        print(f"❌ WORKER INIT FAILED: {errors}", flush=True)
+        logger.error(f"❌ WORKER INIT FAILED: {errors}")
     else:
-        print("✅ WORKER INIT SUCCESS: All models ready!", flush=True)
+        logger.info("✅ WORKER INIT SUCCESS: All models ready!")
 
 @celery_app.task(bind=True)
 def check_model_health(self):
@@ -122,8 +128,6 @@ def check_model_health(self):
     }
     
     # Check if any errors occurred during load
-    # (Re-running load_models returns accumulated errors list)
-    # This is safe because load_models checks for None before re-loading.
     init_errors = load_models()
     if init_errors:
        status["errors"] = init_errors
@@ -156,8 +160,24 @@ def predict_task(self, image_data_b64, mode):
     # Decode Image
     try:
         if "," in image_data_b64:
-            image_data_b64 = image_data_b64.split(",")[1]
+            header, image_data_b64 = image_data_b64.split(",", 1)
+            # Basic header validation
+            if "image/" not in header:
+                 logger.warning(f"Suspicious image header: {header}")
         
+        # Safe decoding
+        image_bytes = base64.b64decode(image_data_b64, validate=True)
+        # Convert bytes to numpy array
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            raise ValueError("Failed to decode image from bytes")
+
+    except Exception as e:
+        logger.error(f"Image Decoding Failed: {e}")
+        return {"status": "error", "error": "Invalid Image Data"}
+
         nparr = np.frombuffer(base64.b64decode(image_data_b64), np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         

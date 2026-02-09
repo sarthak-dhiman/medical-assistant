@@ -1,10 +1,10 @@
 from celery import Celery
-from .config import REDIS_URL
+from .config import settings
 
 celery_app = Celery(
     "worker",
-    broker=REDIS_URL,
-    backend=REDIS_URL,
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
     include=["web_app.backend.tasks"]
 )
 
