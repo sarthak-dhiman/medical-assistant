@@ -185,19 +185,35 @@ def predict_task(self, image_data_b64, mode):
         mask_small = seg_model.predict(small_frame)
         mask = cv2.resize(mask_small, (w, h), interpolation=cv2.INTER_NEAREST)
         
-        # Skin Mask
+        # Skin Mask (Semantic)
         skin_mask = seg_model.get_skin_mask(mask)
+        
+        # Fallback: If Semantic Segmentation (Face/Neck) found nothing, 
+        # try Color-Based Skin Detection (for Arms/Legs/Hands)
+        if cv2.countNonZero(skin_mask) == 0:
+            skin_mask = seg_model.get_skin_mask_color(frame)
         
         # --- ENCODE MASK FOR FRONTEND ---
         
         if mode == "JAUNDICE_BODY":
              # Detect Jaundice on Body Skin
-             if cv2.countNonZero(skin_mask) > 100:
+             
+             # 1. Get Person Mask (MediaPipe)
+             try:
+                 person_mask = seg_model.get_body_segmentation(frame)
+             except Exception:
+                 person_mask = np.ones(frame.shape[:2], dtype=np.uint8) * 255
+                 
+             # 2. Combine with Skin Color Mask
+             # Skin on Person = Person Mask AND Skin Mask
+             combined_mask = cv2.bitwise_and(skin_mask, person_mask)
+             
+             if cv2.countNonZero(combined_mask) > 100:
                   # Crop bounding box of skin
-                  y, x = np.where(skin_mask > 0)
+                  y, x = np.where(combined_mask > 0)
                   y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
                   
-                  # Crop from ORIGINAL frame (not masked_roi) to preserve BGR channels
+                  # Crop from ORIGINAL frame
                   crop = frame[y0:y1, x0:x1]
                   
                   # Ensure it's 3-channel BGR
@@ -214,7 +230,7 @@ def predict_task(self, image_data_b64, mode):
                       "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
                   })
              else:
-                  result.update({"label": "No Skin", "confidence": 0.0})
+                  result.update({"label": "No Skin on Body", "confidence": 0.0})
 
         elif mode == "JAUNDICE_EYE":
             # 1. Extract Skin Crop (Context for Model)
@@ -225,15 +241,36 @@ def predict_task(self, image_data_b64, mode):
                  masked_skin = cv2.bitwise_and(frame, frame, mask=skin_mask)
                  skin_crop = masked_skin[y0:y1, x0:x1]
 
-            eyes = seg_model.get_eye_rois(mask, frame)
+            # 2. Extract Eyes (Priority: MediaPipe -> Fallback: SegFormer)
+            used_mediapipe = True
+            eyes = seg_model.get_eyes_mediapipe(frame)
+            
+            if not eyes:
+                 used_mediapipe = False
+                 # Fallback
+                 # print("⚠️ MediaPipe failed. Using SegFormer fallback.", flush=True)
+                 raw_eyes = seg_model.get_eye_rois(mask, frame)
+                 for cropped_eye, name, bbox in raw_eyes:
+                      masked, _ = seg_model.apply_iris_mask(cropped_eye)
+                      eyes.append((masked, name, bbox))
+
             found_eyes = []
             
             any_jaundice = False
             
-            for cropped_eye, name, (x1, y1, x2, y2) in eyes:
-                # Apply Iris Masking to remove colored iris (which confuses the model)
-                cropped_eye_masked, _ = seg_model.apply_iris_mask(cropped_eye)
+            for cropped_eye_masked, name, (x1, y1, x2, y2) in eyes:
+                # Note: MediaPipe returns ALREADY masked eyes (Sclera only).
+                # SegFormer fallback also returns masked eyes.
                 
+                # ERROR: cv2.imencode requires BGR, assume cropped_eye is BGR
+                # Encode for Nerd Mode (Debug View - VISUALIZE WHAT MODEL SEES)
+                try:
+                    _, buffer = cv2.imencode('.jpg', cropped_eye_masked)
+                    eye_b64 = base64.b64encode(buffer).decode('utf-8')
+                    debug_img_str = f"data:image/jpeg;base64,{eye_b64}"
+                except Exception:
+                    debug_img_str = ""
+
                 # Jaundice Eye detection uses PyTorch
                 # Ensure skin_crop is valid
                 if skin_crop is None or skin_crop.size == 0:
@@ -250,7 +287,8 @@ def predict_task(self, image_data_b64, mode):
                     "label": label, 
                     "confidence": float(conf),
                     "bbox": [x1/w, y1/h, x2/w, y2/h], # Normalized
-                    "method": "hough" # Default
+                    "method": "mediapipe" if used_mediapipe else "hough",
+                    "debug_image": debug_img_str # Store per eye
                 }
                 
                 found_eyes.append(eye_result)
@@ -263,10 +301,15 @@ def predict_task(self, image_data_b64, mode):
                 result["confidence"] = 0.0
             elif any_jaundice:
                 result["label"] = "Jaundice"
-                result["confidence"] = max([e["confidence"] for e in found_eyes if e["label"] == "Jaundice"])
+                # Prioritize showing the Jaundice eye in debug view
+                jaundice_eyes = [e for e in found_eyes if e["label"] == "Jaundice"]
+                result["confidence"] = max([e["confidence"] for e in jaundice_eyes])
+                result["debug_image"] = jaundice_eyes[0]["debug_image"]
             else:
                 result["label"] = "Normal"
                 result["confidence"] = max([e["confidence"] for e in found_eyes])
+                # Show first eye
+                result["debug_image"] = found_eyes[0]["debug_image"]
             
         elif mode == "SKIN_DISEASE":
              # Detect on Skin

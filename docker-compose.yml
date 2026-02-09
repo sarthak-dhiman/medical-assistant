@@ -18,6 +18,8 @@ services:
     volumes:
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
       - ./web_app/backend:/app/web_app/backend # Dev code sync
+      - ./segformer_utils.py:/app/segformer_utils.py # Mount root files
+      - ./inference_pytorch.py:/app/inference_pytorch.py
     environment:
       - REDIS_URL=redis://redis:6379/0
       # GPU Support Enabled
@@ -51,6 +53,8 @@ services:
     volumes:
       - ./saved_models:/app/saved_models
       - ./web_app/backend:/app/web_app/backend
+      - ./segformer_utils.py:/app/segformer_utils.py
+      - ./inference_pytorch.py:/app/inference_pytorch.py
       - hf_cache:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379/0

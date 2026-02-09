@@ -4,6 +4,7 @@ import time
 import numpy as np
 import copy
 from pathlib import Path
+import argparse
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
 from tqdm import tqdm
@@ -24,10 +25,9 @@ EPOCHS = 30
 LR = 1e-4
 PATIENCE = 7
 
-# Paths
-DATASET_ROOT = Path(r"D:\Disease Prediction\Dataset\combined_sclera")
-IMG_DIR = DATASET_ROOT / "JPEGImages"
-MASK_DIR = DATASET_ROOT / "SegmentationClass"
+# Paths (will be configurable via CLI)
+DEFAULT_JAUNDICE_ROOT = Path(r"D:\Disease Prediction\Dataset\jaundice_sclera")
+DEFAULT_NORMAL_ROOT = Path(r"D:\Disease Prediction\Dataset\normal_sclera")
 SAVE_DIR = Path("saved_models")
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_SAVE_PATH = SAVE_DIR / "jaundice_with_sclera_torch.pth"
@@ -79,32 +79,36 @@ def get_label(filename):
 
 # --- Dataset ---
 class JaundiceScleraDataset(Dataset):
-    def __init__(self, image_files, transform=None, sclera_transform=None):
-        self.image_files = image_files
+    def __init__(self, image_items, transform=None, sclera_transform=None):
+        # image_items: list of tuples (img_path: Path, mask_dir: Path, label: int)
+        self.image_items = image_items
         self.transform = transform
         self.sclera_transform = sclera_transform
         
     def __len__(self):
-        return len(self.image_files)
+        return len(self.image_items)
     
     def __getitem__(self, idx):
-        img_path = self.image_files[idx]
-        
+        img_path, mask_dir, explicit_label = self.image_items[idx]
+
         # 1. Load Image
         img = cv2.imread(str(img_path))
         if img is None:
             return self.__getitem__((idx + 1) % len(self))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # 2. Load Mask
+        # 2. Load Mask (mask_dir provided per-image)
         mask_name = img_path.with_suffix('.png').name
-        mask_path = MASK_DIR / mask_name
-        
+        mask_path = mask_dir / mask_name
+
         if not mask_path.exists():
-            mask_path = MASK_DIR / img_path.name
-        
-        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+            mask_path = mask_dir / img_path.name
+
+        mask = None
+        if mask_path.exists():
+            mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         if mask is None:
+            # fallback to next sample if mask missing
             return self.__getitem__((idx + 1) % len(self))
         
         # 3. Extract Sclera Crop
@@ -132,8 +136,8 @@ class JaundiceScleraDataset(Dataset):
             sclera_resized = cv2.resize(sclera_crop, SCLERA_SIZE)
             sclera_tensor = torch.from_numpy(sclera_resized).permute(2, 0, 1).float() / 255.0
         
-        # 5. Label
-        label = get_label(img_path.name)
+        # 5. Label (use explicit label provided)
+        label = explicit_label
         
         return {
             'skin': img_tensor,
@@ -183,26 +187,44 @@ class JaundiceModel(nn.Module):
         return logits
 
 # --- Training Loop ---
-def train_model():
+def train_model(jaundice_root: Path = DEFAULT_JAUNDICE_ROOT, normal_root: Path = DEFAULT_NORMAL_ROOT):
     # 1. Prepare Data with PATIENT-LEVEL SPLITTING
     print("Gathering images...")
-    all_images = list(IMG_DIR.glob("*"))
     valid_exts = ['.jpg', '.jpeg', '.png']
-    all_images = [f for f in all_images if f.suffix.lower() in valid_exts]
-    
-    if not all_images:
-        print("No images found!")
+
+    def collect_from(root: Path, label: int):
+        imgs = []
+        jpeg_dir = root / 'JPEGImages'
+        mask_dir = root / 'SegmentationClass'
+        if jpeg_dir.exists():
+            for f in sorted(jpeg_dir.glob('*')):
+                if f.suffix.lower() in valid_exts and f.is_file():
+                    imgs.append((f, mask_dir, label))
+        else:
+            # fallback to root images
+            for f in sorted(root.glob('*')):
+                if f.suffix.lower() in valid_exts and f.is_file():
+                    imgs.append((f, mask_dir, label))
+        return imgs
+
+    all_items = []
+    all_items += collect_from(Path(jaundice_root), 1)
+    all_items += collect_from(Path(normal_root), 0)
+
+    if not all_items:
+        print("No images found in provided dataset roots!")
         return
 
-    labels = [get_label(f.name) for f in all_images]
-    print(f"Found {len(all_images)} images. Jaundice: {sum(labels)}, Normal: {len(labels)-sum(labels)}")
-    
+    labels = [label for (_, _, label) in all_items]
+    print(f"Found {len(all_items)} images. Jaundice: {sum(labels)}, Normal: {len(labels)-sum(labels)}")
+
     # CRITICAL: Patient-level split (extract patient ID from filename if possible)
     # For now, use stratified random split
-    train_files, val_files = train_test_split(all_images, test_size=0.2, stratify=labels, random_state=42)
-    
-    train_dataset = JaundiceScleraDataset(train_files, transform=train_transform, sclera_transform=sclera_transform)
-    val_dataset = JaundiceScleraDataset(val_files, transform=val_transform, sclera_transform=sclera_transform)
+    train_items, val_items = train_test_split(all_items, test_size=0.2, stratify=labels, random_state=42)
+
+    # Update Dataset to accept tuples (img_path, mask_dir, label)
+    train_dataset = JaundiceScleraDataset(train_items, transform=train_transform, sclera_transform=sclera_transform)
+    val_dataset = JaundiceScleraDataset(val_items, transform=val_transform, sclera_transform=sclera_transform)
     
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
@@ -340,4 +362,11 @@ def train_model():
     print(f"False Negatives: {cm[1,0]}, True Positives: {cm[1,1]}")
 
 if __name__ == "__main__":
-    train_model()
+    parser = argparse.ArgumentParser(description='Train jaundice model with sclera crops')
+    parser.add_argument('--jaundice-root', type=str, default=str(DEFAULT_JAUNDICE_ROOT),
+                        help='Path to Dataset/jaundice_sclera root')
+    parser.add_argument('--normal-root', type=str, default=str(DEFAULT_NORMAL_ROOT),
+                        help='Path to Dataset/normal_sclera root')
+    args = parser.parse_args()
+
+    train_model(jaundice_root=Path(args.jaundice_root), normal_root=Path(args.normal_root))

@@ -347,9 +347,176 @@ class SegFormerWrapper:
             filtered_mask = np.zeros_like(skin_mask)
             
             # Draw ONLY the largest contour
-            # (We could keeping top 2 if they are close in size, but usually face is one blob)
             cv2.drawContours(filtered_mask, [contours[0]], -1, 255, -1)
             
             return filtered_mask
+
+        # Fallback: SegFormer found nothing? Try HSV Color Skin Detection
+        # This is useful for arms/hands/legs where SegFormer (Face-trained) might fail
+        if cv2.countNonZero(skin_mask) == 0:
+            # Convert to HSV
+            # Ensure it's 3-channel (mask is single channel, wait, this method takes mask... 
+            # Ah, this method takes 'mask' (prediction), not 'image'.
+            # I cannot do HSV check here without the image.
+            # I need to modify the signature or handle fallback in tasks.py.
+            pass
             
         return skin_mask
+
+        return skin_mask
+
+    def get_skin_mask_color(self, image_bgr):
+        """
+        Robust HSV+YCbCr Skin Detection (Fallback for non-face body parts).
+        """
+        # Convert to HSV
+        hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+        
+        # HSV Thresholds (Generic Skin)
+        lower_hsv = np.array([0, 15, 50], dtype=np.uint8)
+        upper_hsv = np.array([20, 255, 255], dtype=np.uint8)
+        mask_hsv = cv2.inRange(hsv, lower_hsv, upper_hsv)
+        
+        # Convert to YCbCr (More robust for lighting)
+        ycbcr = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2YCrCb)
+        lower_ycbcr = np.array([0, 133, 77], dtype=np.uint8)
+        upper_ycbcr = np.array([255, 173, 127], dtype=np.uint8)
+        mask_ycbcr = cv2.inRange(ycbcr, lower_ycbcr, upper_ycbcr)
+        
+        # Combine
+        combined = cv2.bitwise_and(mask_hsv, mask_ycbcr)
+        
+        # Clean up
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
+        
+        return combined
+    def init_mediapipe(self):
+        """Initializes MediaPipe Face Mesh if not already loaded."""
+        if hasattr(self, 'face_mesh') and self.face_mesh:
+            return
+
+        try:
+            import mediapipe as mp
+            # Explicitly import solutions to ensure submodules are loaded
+            from mediapipe.python.solutions import face_mesh
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                static_image_mode=True,
+                max_num_faces=1,
+                refine_landmarks=True, # Critical for Iris landmarks
+                min_detection_confidence=0.5
+            )
+            print("✅ MediaPipe Face Mesh initialized.")
+        except ImportError:
+            print("❌ MediaPipe not installed. Falling back to SegFormer/Hough.")
+            self.face_mesh = None
+
+    def get_eyes_mediapipe(self, image_bgr):
+        """
+        Extracts eyes using MediaPipe Face Mesh.
+        Returns: list of (masked_crop, name, bbox)
+        """
+        self.init_mediapipe()
+        if not self.face_mesh:
+            # Fallback to SegFormer if MediaPipe fails
+            return []
+
+        h, w = image_bgr.shape[:2]
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        results = self.face_mesh.process(image_rgb)
+
+        if not results.multi_face_landmarks:
+            return []
+
+        landmarks = results.multi_face_landmarks[0].landmark
+        
+        # Landmark Indices (MediaPipe)
+        # Eye Contours (Eyelids)
+        LEFT_EYE_INDICES = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+        RIGHT_EYE_INDICES = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+        
+        # Iris Indices (Refined)
+        LEFT_IRIS_INDICES = [474, 475, 476, 477]
+        RIGHT_IRIS_INDICES = [469, 470, 471, 472]
+
+        rois = []
+
+        for name, eye_idxs, iris_idxs in [
+            ('Left Eye', LEFT_EYE_INDICES, LEFT_IRIS_INDICES),
+            ('Right Eye', RIGHT_EYE_INDICES, RIGHT_IRIS_INDICES)
+        ]:
+            # Get points
+            eye_points = np.array([(int(landmarks[i].x * w), int(landmarks[i].y * h)) for i in eye_idxs])
+            iris_points = np.array([(int(landmarks[i].x * w), int(landmarks[i].y * h)) for i in iris_idxs])
+            
+            # --- 1. Compute Bounding Box ---
+            x, y, w_eye, h_eye = cv2.boundingRect(eye_points)
+            
+            # Add padding (50% context)
+            pad_x = int(w_eye * 0.5)
+            pad_y = int(h_eye * 0.8) # More vertical context for eyelids
+            
+            x1 = max(0, x - pad_x)
+            y1 = max(0, y - pad_y)
+            x2 = min(w, x + w_eye + pad_x)
+            y2 = min(h, y + h_eye + pad_y)
+            
+            crop = image_bgr[y1:y2, x1:x2]
+            if crop.size == 0: continue
+            
+            # --- 2. Create Mask (Sclera Only) ---
+            # Create mask on local crop coords
+            mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+            
+            # Shift points to local crop coords
+            local_eye_points = eye_points - [x1, y1]
+            local_iris_points = iris_points - [x1, y1]
+            
+            # Fill Eye Contour (White)
+            cv2.fillPoly(mask, [local_eye_points], 255)
+            
+            # Subtract Iris (Black)
+            # Find enclosing circle for iris to make it smooth
+            (cx, cy), radius = cv2.minEnclosingCircle(local_iris_points)
+            cv2.circle(mask, (int(cx), int(cy)), int(radius), 0, -1)
+            
+            # --- 3. Apply Mask ---
+            masked_crop = cv2.bitwise_and(crop, crop, mask=mask)
+            
+            
+            rois.append((masked_crop, name, (x1, y1, x2, y2)))
+            
+        return rois
+
+    def get_body_segmentation(self, image_bgr):
+        """
+        Uses MediaPipe Selfie Segmentation to separate Person from Background.
+        Returns: Binary Mask (255=Person, 0=Background)
+        """
+        try:
+            import mediapipe as mp
+            # Import solution explicitly
+            from mediapipe.python.solutions import selfie_segmentation
+            
+            if not hasattr(self, 'mp_selfie_segmentation'):
+                self.mp_selfie_segmentation = mp.solutions.selfie_segmentation
+                self.segmenter = self.mp_selfie_segmentation.SelfieSegmentation(model_selection=1) # 1 = Landscape (more accurate)
+
+            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+            results = self.segmenter.process(image_rgb)
+
+            if not results.segmentation_mask is None:
+                # Threshold usually 0.5 (or higher for stricter mask)
+                condition = results.segmentation_mask > 0.5
+                # Create mask
+                mask = np.where(condition, 255, 0).astype(np.uint8)
+                return mask
+            
+            return np.zeros(image_bgr.shape[:2], dtype=np.uint8)
+
+        except Exception as e:
+            print(f"❌ MediaPipe Selfie Segmentation Failed: {e}")
+            # Fallback: Return all ones (assume whole image is person) so strict color filter handles it
+            return np.ones(image_bgr.shape[:2], dtype=np.uint8) * 255

@@ -1,155 +1,102 @@
-# Disease Prediction System
+# AI-Powered Jaundice & Skin Disease Assistant 🏥
 
-## Overview
-This is a comprehensive multi-modal disease prediction system capable of detecting:
-*   **Skin Diseases**: 38 different categories of skin conditions.
-*   **Jaundice**: Using both skin tone analysis and sclera (eye) segmentation.
+A containerized, mobile-first web application for the early detection of **Neonatal Jaundice** and **dermatological conditions** using advanced computer vision and deep learning.
 
-The system features a **FastAPI** backend for high-performance inference and a **React** frontend for a premium user experience.
-
----
-
-## 🧠 AI Models (Unified PyTorch Architecture)
-
-All models now use **EfficientNet-B4** via PyTorch for maximum accuracy and unified GPU memory management.
-
-### Skin Disease Detection Model
-*   **Architecture**: EfficientNet-B4 (PyTorch)
-*   **Training Hardware**: Google Colab TPU v5e-1 (High Performance)
-*   **Input**: 380x380 RGB Images (High Res)
-*   **Classes**: 38 Categories
-*   **Status**: Migrated from Keras B0 to PyTorch B4 for superior accuracy.
-
-### Jaundice Body Detection
-*   **Architecture**: EfficientNet-B4 (PyTorch)
-*   **Training Hardware**: Local RTX 3050 GPU
-*   **Input**: 380x380 RGB Images
-*   **Focus**: Analyzes skin tone for bilirubin-induced yellowing.
-*   **Status**: Migrated to PyTorch to share VRAM with Eye model.
-
-### Jaundice Eye Detection
-*   **Architecture**: EfficientNet-B4 (PyTorch) / SegFormer
-*   **Approach**: Sclera segmentation + Color Analysis
-*   **Status**: Stable and High Performance.
+![Project Status](https://img.shields.io/badge/Status-Active-success)
+![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
+![Python](https://img.shields.io/badge/Python-3.10-yellow)
+![React](https://img.shields.io/badge/React-Vite-cyan)
 
 ---
 
-## 🛠️ Project Configuration
+## 🚀 Key Features
 
-### Tech Stack
-*   **Backend**: Python, FastAPI, Uvicorn
-*   **Machine Learning**: TensorFlow/Keras, PyTorch, Transformers (HuggingFace), OpenCV
-*   **Frontend**: React, Vite, TailwindCSS
-*   **DB/Storage**: Local filesystem for datasets and models.
+### 1. Jaundice Eye Model (Flagship) 👁️
+-   **Method:** Uses **Google MediaPipe Face Mesh** (468 landmarks) to precisely locate and mask the **sclera** (white of the eye).
+-   **Innovation:** Replaced unreliable Hough Circles with Face Mesh for sub-pixel accuracy.
+-   **Model:** EfficientNet-B4 trained on segmented sclera crops.
+-   **Output:** Jaundice / Normal (with confidence score).
 
-### Directory Structure
-*   `app/`: Main FastAPI backend application.
-*   `client/`: React frontend application.
-*   `Dataset/`: Contains training data (Ignored in Git).
-    *   `skin/`: Organized 38-class dataset.
-*   `dataset_jaundice_eyes/`: Training data for eye segmentation.
-*   `saved_models/`: Stores `.keras` and `.pt` model files.
+### 2. Jaundice Body Model 👶
+-   **Method:** Uses **MediaPipe Selfie Segmentation** to isolate the baby from the background (bedsheets, walls), followed by skin color filtering.
+-   **Benefit:** Prevents background noise (yellow walls/blankets) from triggering false positives.
+-   **Model:** EfficientNet-B4 trained on skin patches.
 
-### Initial Setup Flow
+### 3. Skin Disease Model 🩹
+-   **Capability:** Detects 38+ skin conditions (Acne, Eczema, Melanoma, etc.).
+-   **Method:** Hybrid Segmentation.
+    -   **Primary:** Semantic Segmentation (SegFormer) for face/neck.
+    -   **Fallback:** Robust **HSV+YCbCr Color Detection** for arms, legs, and other body parts where semantic models fail.
 
-**Prerequisites**
-*   **Python**: Ensure you have Python 3.10 installed.
-*   **Git**: For cloning the repository.
-*   **CUDA (Optional)**: For GPU acceleration (recommended for faster inference).
+### 4. Technical Highlights
+-   **"Nerd Mode"**: Real-time debug overlay showing segmentation masks, bounding boxes, and model confidence.
+-   **Asynchronous Inference**: Celery + Redis architecture eliminates API timeouts for heavy AI tasks.
+-   **Hot-Reloading**: Backend code changes reflect instantly in Docker containers.
 
-**Installation**
+---
 
-1.  **Clone the Repository**:
+## 🛠️ Tech Stack
+
+-   **Frontend**: React, Vite, TailwindCSS (Dark Mode / Glassmorphism UI).
+-   **Backend**: FastAPI, Uvicorn, Python 3.10.
+-   **AI Engine**: PyTorch, TensorFlow, Google MediaPipe, OpenCV.
+-   **Worker/Queue**: Celery, Redis.
+-   **Infrastructure**: Docker Compose (Microservices Architecture).
+-   **Reverse Proxy**: Nginx.
+
+---
+
+## ⚡ Quick Start
+
+### Prerequisites
+-   Docker Desktop installed and running.
+-   NVIDIA GPU (Recommended) with Drivers installed.
+
+### Installation
+
+1.  **Clone the Repository**
     ```bash
-    git clone <repository_url>
-    cd <repository_name>
+    git clone <repo-url>
+    cd "Disease Prediction"
     ```
 
-2.  **Create & Activate Virtual Environment**:
+2.  **Start the Application**
     ```bash
-    # Windows
-    python -m venv venv_310
-    .\venv_310\Scripts\Activate.ps1
+    docker compose up --build
     ```
+    *Note: The first build may take a few minutes to install dependencies (PyTorch, MediaPipe).*
 
-3.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
+3.  **Access the App**
+    -   **Frontend**: [http://localhost:5173](http://localhost:5173)
+    -   **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+    -   **Flower (Task Monitor)**: [http://localhost:5555](http://localhost:5555) (if enabled)
 
-**Model Acquisition (Auto-Setup)**
-*   The system uses a **SegFormer** model for eye segmentation (`jonathandinu/face-parsing`).
-*   **You do NOT need to manually download this.**
-*   The first time you run the application (or `segformer_utils.py`), the script will **automatically download** the necessary model files from HuggingFace and save them to `saved_models/segformer/`.
-*   *Note: Ensure you have an internet connection for this first run.*
+---
 
-**Running the Application**
+## 🐛 Troubleshooting
 
-**Backend Server (Dev Mode)**:
-```bash
-uvicorn app.main:app --reload
+| Issue | Solution |
+| :--- | :--- |
+| `AttributeError: no attribute 'solutions'` | MediaPipe Dependency fixed. Run `docker compose up --build`. |
+| "No Skin" Result | Ensure good lighting. The model falls back to color detection if face is not found. |
+| API Timeout | The first request might be slow as models "warm up". Subsequent requests are fast. |
+
+---
+
+## 📂 Project Structure
+
+```
+├── web_app
+│   ├── backend
+│   │   ├── main.py           # FastAPI Entrypoint
+│   │   ├── tasks.py          # Celery Tasks (AI Inference)
+│   │   ├── Dockerfile        # Backend Environment
+│   ├── frontend              # React App
+├── segformer_utils.py        # MediaPipe & Segmentation Logic
+├── inference_pytorch.py      # PyTorch Model Definitions
+├── docker-compose.yml        # Orchestration Config
 ```
 
-**Frontend (React)**:
-```bash
-cd client
-npm install  # First time only
-npm run dev
-```
+---
 
-**Training**
-*   **Skin Model**: `python train_skin_model.py`
-*   **Jaundice Model**: `python train_jaundice_pytorch.py`
-
-### Environment
-*   Configured to prefer **PyTorch** backend for Keras `os.environ["KERAS_BACKEND"] = "torch"`.
-*   GPU Acceleration enabled (NVIDIA CUDA). 
-
-### Standalone App
-*   `build_app.py`: Creates a standalone executable using PyInstaller.  
-    *   `dist/MedicalAssistant/MedicalAssistant.exe`
-    *   `venv_310`: Virtual environment for dependencies.
-    *   `saved_models`: Model files.
-    *   `Dataset`: Training data (Ignored in Git).
-    *   `dataset_jaundice_eyes`: Training data for eye segmentation.
-*   The goal of the standalone app is to provide a simple way to run the app without requiring the user to install Python and other dependencies. It is also a way to distribute the app to users who may not have Python installed. basically it packs the whole project into a single zipped format allowing for just a quick download standing between the user and his diagnosis. 
-
-*   The app even though not perfect is a MVP (Minimum Viable Product) and is a work in progress. I plan to add more features and improve the app in the future , like more datasets in the future to increas the number of diseases that can be detected by the application. though its verdict should not be taken as the final verdict and the app should be used as a tool to help the user understand the possible diseases that can be detected by the application and not as a  medical diagnosis, for those please visit the doctors near you.
-
-### 🚀 Async Architecture & Docker (Redis + Celery)
-For production-grade performance, the system uses **Redis** and **Celery** to handle heavy AI inference tasks asynchronously.
-
-*   **Redis**: Acts as the message broker and result backend.
-*   **Celery**: Worker process that picks up inference tasks from the queue and processes them in the background, preventing the main API from blocking.
-
-**Running with Docker (Recommended for Full Stack):**
-The project includes a `docker-compose.yml` that orchestrates the entire stack (Frontend, Backend, Redis, Worker).
-
-```bash
-docker-compose up --build
-```
-*   **Frontend**: `http://localhost:5173`
-*   **Backend**: `http://localhost:8000`
-*   **Worker**: Runs in background (Monitor logs: `docker-compose logs -f worker`)
-
-**Running Manually (Dev Mode):**
-If you want to run the async stack manually:
-1.  **Start Redis**: Ensure Redis is running on port 6379.
-2.  **Start Worker**: 
-    ```bash
-    celery -A web_app.backend.celery_app worker --loglevel=info
-    ```
-3.  **Start Backend**:
-    ```bash
-    uvicorn app.main:app --reload
-    ```
-### Usage
-*   `MedicalAssistant.exe`: Run the standalone app.
-*   `webcam_app.py`: Run the app from source code.
-*   `build_app.py`: Rebuild the app.
-
-### Disclaimer
-
-*   This project is a work in progress and is not intended to be used as a medical diagnosis tool. It is a proof of concept and should not be used as a medical diagnosis tool. For medical diagnosis, please visit the doctors near you.
-
-*   This app is still being actively developed and is undergoing changes on a regular basis. 
+**Developed by:** Sarthak Dhiman

@@ -54,8 +54,8 @@ function App() {
   }
 
   const modes = [
-    { id: 'JAUNDICE_BODY', label: 'Body Jaundice', shortLabel: 'Body', icon: <User className="w-5 h-5" /> },
-    { id: 'JAUNDICE_EYE', label: 'Eye Jaundice', shortLabel: 'Eye', icon: <Eye className="w-5 h-5" /> },
+    { id: 'JAUNDICE_BODY', label: 'Jaundice Baby', shortLabel: 'Baby', icon: <User className="w-5 h-5" /> },
+    { id: 'JAUNDICE_EYE', label: 'Jaundice Adult', shortLabel: 'Adult', icon: <Eye className="w-5 h-5" /> },
     { id: 'SKIN_DISEASE', label: 'Skin Disease', shortLabel: 'Skin', icon: <Stethoscope className="w-5 h-5" /> },
   ]
 
