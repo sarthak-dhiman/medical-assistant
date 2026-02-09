@@ -6,10 +6,11 @@ python-multipart
 requests
 opencv-python-headless
 pillow
-transformers
+transformers<4.46  # Pin to version compatible with PyTorch 2.2
 torch
 torchvision
 timm
 scikit-learn
 tqdm
-# Removed CPU-only flag to allow CUDA version
+numpy<2  # PyTorch 2.2.0 requires NumPy 1.x
+

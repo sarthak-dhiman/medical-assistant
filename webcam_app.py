@@ -9,7 +9,7 @@ current_model = "JAUNDICE"  # Start in Jaundice mode
 
 try:
     # 1. New PyTorch Model for EYE detection
-    from inference_pytorch import predict_jaundice as predict_jaundice_torch
+    from inference_pytorch import predict_jaundice_eye as predict_jaundice_torch
     
     # 2. New PyTorch Model for BODY/SKIN Jaundice (Replaces Keras)
     from inference_pytorch import predict_jaundice_body as predict_jaundice_body_torch
@@ -287,14 +287,12 @@ def main():
                 
                 results = []
                 for cropped_eye, name, (x1, y1, x2, y2) in eyes:
-                    # 1. Blur Check (On original crop)
-                    blur_score = calculate_blur(cropped_eye)
-                    # If using uploaded image, we might relax the blur check or keep it
-                    # Static images usually better quality, but still good to check.
-                    if blur_score < 100.0: # Threshold for blur
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2) # Yellow for blur
-                        results.append(("Blurry", 0.0))
-                        continue
+                    # 1. Blur Check (Relaxed - User requested removal)
+                    # blur_score = calculate_blur(cropped_eye)
+                    # if blur_score < 100.0: 
+                    #     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                    #     results.append(("Blurry", 0.0))
+                    #     continue
 
                     # 2. Iris Masking (Fix for Cornea Confusion)
                     # We mask the iris to force the model to look at sclera

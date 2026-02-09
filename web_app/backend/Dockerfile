@@ -1,5 +1,5 @@
 # Base Image with PyTorch + CUDA 12.1
-FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
 # System Dependencies (OpenCV + Glib + Curl)
 RUN apt-get update && apt-get install -y \

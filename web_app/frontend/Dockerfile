@@ -5,7 +5,9 @@ WORKDIR /app
 
 # Dependencies
 COPY web_app/frontend/package.json web_app/frontend/package-lock.json ./
-RUN npm ci
+# Avoid npm peer dependency resolution failures inside the build environment
+# Use legacy peer deps to match the host dev setup and reduce build-time conflicts
+RUN npm install --legacy-peer-deps
 
 # Source
 COPY web_app/frontend ./

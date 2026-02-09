@@ -39,21 +39,26 @@ def load_models():
         try:
             from inference_pytorch import predict_jaundice_eye
             print("Warming Jaundice Eye Model (PyTorch)...")
-            # Warm up
-            predict_jaundice_eye(np.zeros((380,380,3), dtype=np.uint8), np.zeros((64,64,3), dtype=np.uint8))
+            # Warm up with actual inference to initialize CUDA kernels
+            dummy_skin = np.zeros((380,380,3), dtype=np.uint8)
+            dummy_sclera = np.zeros((64,64,3), dtype=np.uint8)
+            for _ in range(3):  # Run 3 times to ensure JIT compilation
+                predict_jaundice_eye(dummy_skin, dummy_sclera)
             jaundice_eye_model = predict_jaundice_eye
             print("✅ Jaundice Eye Model Ready") 
         except Exception as e:
             err_msg = f"Failed to load Jaundice Eye: {e}"
             print(err_msg)
             temp_errors.append(err_msg)
-
+            
     # 2. Jaundice Body Model (PyTorch) - Replaces Keras
     if jaundice_skin_model is None:
         try:
             from inference_pytorch import predict_jaundice_body
             print("Warming Jaundice Body Model (PyTorch)...")
-            predict_jaundice_body(np.zeros((380, 380, 3), dtype=np.uint8))
+            dummy_img = np.zeros((380, 380, 3), dtype=np.uint8)
+            for _ in range(3):  # Run 3 times to ensure JIT compilation
+                predict_jaundice_body(dummy_img)
             jaundice_skin_model = predict_jaundice_body
             print("✅ Jaundice Body Model Ready")
         except Exception as e:
@@ -66,7 +71,9 @@ def load_models():
         try:
             from inference_pytorch import predict_skin_disease_torch
             print("Warming Skin Disease Model (PyTorch)...")
-            predict_skin_disease_torch(np.zeros((380, 380, 3), dtype=np.uint8))
+            dummy_img = np.zeros((380, 380, 3), dtype=np.uint8)
+            for _ in range(3):  # Run 3 times to ensure JIT compilation
+                predict_skin_disease_torch(dummy_img)
             skin_disease_model = predict_skin_disease_torch
             print("✅ Skin Disease Model Ready")
         except Exception as e:
@@ -128,12 +135,23 @@ def check_model_health(self):
 @celery_app.task(bind=True)
 def predict_task(self, image_data_b64, mode):
     # FAST FAIL: Check if models loaded correctly during init
-    if mode == "JAUNDICE_EYE" and jaundice_eye_model is None:
-         return {"status": "error", "error": "Jaundice Eye Model Not Ready (Check Server Logs)"}
-    if mode == "JAUNDICE_BODY" and (seg_model is None or jaundice_skin_model is None):
-         return {"status": "error", "error": "Jaundice Body Model Not Ready (Check Server Logs)"}
-    if mode == "SKIN_DISEASE" and (seg_model is None or skin_disease_model is None):
-         return {"status": "error", "error": "Skin Disease Model Not Ready (Check Server Logs)"}
+    if mode == "JAUNDICE_EYE":
+        if jaundice_eye_model is None:
+             return {"status": "error", "error": "Jaundice Eye Model Not Ready"}
+        if not seg_model or not seg_model.is_ready:
+             return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
+
+    if mode == "JAUNDICE_BODY":
+        if jaundice_skin_model is None:
+             return {"status": "error", "error": "Jaundice Body Model Not Ready"}
+        if not seg_model or not seg_model.is_ready:
+             return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
+
+    if mode == "SKIN_DISEASE":
+        if skin_disease_model is None:
+             return {"status": "error", "error": "Skin Disease Model Not Ready"}
+        if not seg_model or not seg_model.is_ready:
+             return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
     
     # Decode Image
     try:

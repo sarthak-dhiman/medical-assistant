@@ -36,12 +36,13 @@ async def health_check():
         task = check_model_health.delay()
         result = task.get(timeout=2.0)
         
+        
         if result.get("ready"):
-            return {"status": "ready", "details": result}
+            return {"status": "ready", "models_ready": True, "details": result}
         else:
-            return {"status": "loading", "details": result}
+            return {"status": "loading", "models_ready": False, "details": result}
     except Exception as e:
-        return {"status": "not_ready", "error": str(e)}
+        return {"status": "not_ready", "models_ready": False, "error": str(e)}
 
 @app.post("/predict")
 async def predict_endpoint(request: PredictRequest):

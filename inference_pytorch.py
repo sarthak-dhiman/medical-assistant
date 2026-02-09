@@ -61,10 +61,10 @@ class JaundiceBodyModel(nn.Module):
         # Use simple B4 backbone matching local training script
         self.backbone = timm.create_model("efficientnet_b4", pretrained=False, num_classes=0)
         self.classifier = nn.Sequential(
-            nn.Linear(self.backbone.num_features, 256),
+            nn.Linear(self.backbone.num_features, 512),
             nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(256, 1)
+            nn.Dropout(0.5),
+            nn.Linear(512, 1)
         )
     
     def forward(self, x):
@@ -200,10 +200,20 @@ def predict_jaundice_eye(skin_img, sclera_crop=None):
     model = get_eye_model()
     if not model: return "Model Missing", 0.0
     
-    # Preprocess Skin
-    skin_t = _preprocess_img(skin_img, size=IMG_SIZE)
+    # Preprocess Skin - MATCH NEW TRAINING: ImageNet normalization
+    skin_resized = cv2.resize(skin_img, IMG_SIZE)
+    skin_rgb = cv2.cvtColor(skin_resized, cv2.COLOR_BGR2RGB)
+    skin_float = skin_rgb.astype(np.float32) / 255.0
     
-    # Preprocess Sclera (64x64)
+    # ImageNet normalization
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    skin_norm = (skin_float - mean) / std
+    
+    skin_chw = np.transpose(skin_norm, (2, 0, 1))
+    skin_t = torch.tensor(np.expand_dims(skin_chw, axis=0), dtype=torch.float32).to(DEVICE)
+    
+    # Preprocess Sclera (64x64) - MATCH NEW TRAINING: ImageNet normalization
     if sclera_crop is None or sclera_crop.size == 0:
         sclera_crop = np.zeros((*SCLERA_SIZE, 3), dtype=np.uint8)
     else:
@@ -211,10 +221,6 @@ def predict_jaundice_eye(skin_img, sclera_crop=None):
         
     sclera_rgb = cv2.cvtColor(sclera_crop, cv2.COLOR_BGR2RGB)
     sclera_float = sclera_rgb.astype(np.float32) / 255.0
-    # Sclera branch training used simple /255.0 usually, but let's assume standard norm for now if based on generic logic
-    # Actually, the eye model training used standard Norm.
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     sclera_norm = (sclera_float - mean) / std
     sclera_chw = np.transpose(sclera_norm, (2, 0, 1))
     sclera_t = torch.tensor(np.expand_dims(sclera_chw, axis=0), dtype=torch.float32).to(DEVICE)
@@ -222,10 +228,16 @@ def predict_jaundice_eye(skin_img, sclera_crop=None):
     with torch.no_grad():
         logits = model(skin_t, sclera_t)
         prob = torch.sigmoid(logits).item()
-        
-    label = "Jaundice" if prob > 0.5 else "Normal"
-    # Confidence: distance from 0.5 mapped to 0.5-1.0 range
-    conf = prob if prob > 0.5 else 1.0 - prob
+    
+    # Standard threshold after retraining with balanced data
+    threshold = 0.5
+    label = "Jaundice" if prob > threshold else "Normal"
+    
+    if prob > threshold:
+        conf = prob  # Confidence in Jaundice
+    else:
+        conf = 1.0 - prob  # Confidence in Normal
+    
     return label, conf
 
 def predict_jaundice_body(img_bgr):
@@ -237,8 +249,17 @@ def predict_jaundice_body(img_bgr):
         logits = model(img_t)
         prob = torch.sigmoid(logits).item()
     
-    label = "Jaundice" if prob > 0.5 else "Normal"
-    conf = prob if prob > 0.5 else 1.0 - prob
+    # STRICTER THRESHOLD: Model trained on babies, less reliable on adults
+    # Require 70% confidence instead of 50% to reduce false positives
+    threshold = 0.70
+    label = "Jaundice" if prob > threshold else "Normal"
+    
+    # Return actual probability as confidence
+    if prob > threshold:
+        conf = prob  # Confidence in Jaundice prediction
+    else:
+        conf = 1.0 - prob  # Confidence in Normal prediction
+    
     return label, conf
 
 def predict_skin_disease_torch(img_bgr):
@@ -253,5 +274,11 @@ def predict_skin_disease_torch(img_bgr):
         
     idx = idx.item()
     conf = conf.item()
-    label = _skin_classes.get(idx, f"Unknown Class {idx}")
+    
+    # Default to "Normal" if confidence < 80% to reduce false positives
+    if conf < 0.80:
+        label = "Normal"
+    else:
+        label = _skin_classes.get(idx, f"Unknown Class {idx}")
+    
     return label, conf

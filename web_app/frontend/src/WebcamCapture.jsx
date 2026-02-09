@@ -113,7 +113,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
             setIsProcessing(false)
             setError("Server Error")
         }
-    }, [mode, isProcessing, uploadedImage, result, error])
+    }, [mode, uploadedImage]) // FIX: Simplified dependencies to prevent stale closures
 
     // Auto-capture loop
     useEffect(() => {
@@ -124,9 +124,19 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode }) => {
         return () => clearInterval(interval)
     }, [captureAndPredict])
 
+    // CRITICAL FIX: Reset ALL state when mode changes
     useEffect(() => {
-        setResult(null); // Clear previous result
+        setResult(null);
         setError(null);
+        setIsProcessing(false); // FIX: Reset processing state
+        lastRequestRef.current = { image: null, mode: null }; // FIX: Clear cache
+
+        // FIX: Force immediate capture after mode switch
+        setTimeout(() => {
+            if (!uploadedImage) {
+                captureAndPredict();
+            }
+        }, 100);
     }, [mode])
 
     // Status Helper

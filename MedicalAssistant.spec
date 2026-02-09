@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+
+datas = []
+datas += collect_data_files('onnxruntime')
 
 
 a = Analysis(
-    ['webcam_app.py'],
+    ['webcam_app_onnx.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['sklearn.utils._typedefs', 'sklearn.neighbors._partition_nodes', 'sklearn.metrics._pairwise_distances_reduction', 'PIL._tkinter_finder', 'timm', 'torch', 'torchvision'],
+    datas=datas,
+    hiddenimports=['onnxruntime', 'PIL._tkinter_finder', 'numpy', 'cv2'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

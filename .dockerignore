@@ -3,4 +3,4 @@ venv_310/
 saved_models/
 __pycache__/
 .git/
-node_modules/
+**/node_modules

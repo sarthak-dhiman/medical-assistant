@@ -52,8 +52,18 @@ class SegFormerWrapper:
                 self.processor.save_pretrained(local_path)
                 self.model.save_pretrained(local_path)
             
-            self.model.to(self.device)
-            print(f"Model loaded successfully.")
+            try:
+                self.model.to(self.device)
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    print("⚠️ GPU Out of Memory! Falling back to CPU for SegFormer...")
+                    self.device = "cpu"
+                    self.model.to("cpu")
+                    torch.cuda.empty_cache()
+                else:
+                    raise e
+            
+            print(f"✅ SegFormer loaded successfully on {self.device}")
             
             # Standard Face Parsing Labels (BiSeNet/CelebAMask-HQ convention)
             # 0: background
@@ -74,15 +84,33 @@ class SegFormerWrapper:
             self.labels = {
                 'background': 0, 'skin': 1, 'l_brow': 2, 'r_brow': 3, 
                 'l_eye': 4, 'r_eye': 5, 'eye_g': 6, 'l_ear': 7, 
-                'r_ear': 8, 'ear_r': 9, 'nose': 10, 'mouth': 11, 
+                'r_ear': 8, 'ear_r': 9, 'ear_r': 9, 'nose': 10, 'mouth': 11, 
                 'u_lip': 12, 'l_lip': 13, 'neck': 14, 'neck_l': 15, 
                 'cloth': 16, 'hair': 17, 'hat': 18
             }
             
+        except ImportError as e:
+            print(f"❌ IMPORT ERROR Loading SegFormer: {e}")
+            print(f"   This usually means 'transformers' library is missing or incompatible.")
+            print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
+            self.model = None
+        except RuntimeError as e:
+            print(f"❌ RUNTIME ERROR Loading SegFormer: {e}")
+            print(f"   This could be a CUDA/memory issue or model file corruption.")
+            print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
+            self.model = None
         except Exception as e:
-            print(f"ERROR Loading SegFormer: {e}")
+            print(f"❌ UNEXPECTED ERROR Loading SegFormer: {type(e).__name__}: {e}")
+            print(f"   Full traceback:")
+            import traceback
+            traceback.print_exc()
+            print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
             self.model = None
     
+
+    @property
+    def is_ready(self):
+        return self.model is not None
 
     def predict(self, image):
         """
@@ -90,6 +118,7 @@ class SegFormerWrapper:
         Returns class mask (H, W).
         """
         if self.model is None:
+            print("⚠️ SegFormer Predict called but model is None!")
             # Return an empty mask if the model failed to load
             if isinstance(image, np.ndarray):
                 return np.zeros(image.shape[:2], dtype=np.uint8)

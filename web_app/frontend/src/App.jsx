@@ -24,7 +24,7 @@ function App() {
       try {
         const res = await fetch(HEALTH_URL);
         const data = await res.json();
-        if (data.status === 'ready') {
+        if (data.models_ready) {
           setIsAppReady(true);
         } else {
           console.log("Waiting for models...", data);
