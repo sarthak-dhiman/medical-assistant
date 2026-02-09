@@ -23,26 +23,36 @@ print(f"DEBUG: PyTorch will use device: {DEVICE}", flush=True)
 # --- Model Architectures (Must Match Training) ---
 
 # 1. Jaundice Eye Model (EfficientNet-B4 + Sclera Branch)
+# 1. Jaundice Eye Model (EfficientNet-B4 + Sclera Branch)
 class JaundiceModel(nn.Module):
     def __init__(self):
         super(JaundiceModel, self).__init__()
+        # Skin Branch: EfficientNet-B4
         self.skin_backbone = timm.create_model('tf_efficientnet_b4', pretrained=False, num_classes=0)
         self.skin_dim = self.skin_backbone.num_features
         
+        # Sclera Branch: Lightweight CNN
         self.sclera_branch = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d(1),
         )
         self.sclera_dim = 64
         
+        # Fusion Classifier with Stronger Regularization (Matches training script)
         self.classifier = nn.Sequential(
             nn.Dropout(0.5),
-            nn.Linear(self.skin_dim + self.sclera_dim, 128),
+            nn.Linear(self.skin_dim + self.sclera_dim, 256),
             nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(128, 1)
         )
         
