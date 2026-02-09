@@ -50,7 +50,9 @@ saved_models/*.pt
 saved_models/*.pth
 saved_models/*.safetensors
 saved_models/*.bin
-saved_models/segformer
+saved_models/segformer/
+saved_models/**/*.pth
+saved_models/**/*.safetensors
 *.onnx
 
 # Datasets & Archives
