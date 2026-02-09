@@ -1,4 +1,4 @@
-# AI-Powered Jaundice & Skin Disease Assistant 🏥
+# AI-Powered Jaundice & Skin Disease Assistant
 
 A containerized, mobile-first web application for the early detection of **Neonatal Jaundice** and **dermatological conditions** using advanced computer vision and deep learning.
 
@@ -9,50 +9,94 @@ A containerized, mobile-first web application for the early detection of **Neona
 
 ---
 
-## 🚀 Key Features
+## Technical Architecture
 
-### 1. Jaundice Eye Model (Flagship) 👁️
--   **Method:** Uses **Google MediaPipe Face Mesh** (468 landmarks) to precisely locate and mask the **sclera** (white of the eye).
--   **Innovation:** Replaced unreliable Hough Circles with Face Mesh for sub-pixel accuracy.
--   **Model:** EfficientNet-B4 trained on segmented sclera crops.
--   **Output:** Jaundice / Normal (with confidence score).
+The system is built as a microservices architecture to ensure scalability and maintainability:
 
-### 2. Jaundice Body Model 👶
--   **Method:** Uses **MediaPipe Selfie Segmentation** to isolate the baby from the background (bedsheets, walls), followed by skin color filtering.
--   **Benefit:** Prevents background noise (yellow walls/blankets) from triggering false positives.
--   **Model:** EfficientNet-B4 trained on skin patches.
-
-### 3. Skin Disease Model 🩹
--   **Capability:** Detects 38+ skin conditions (Acne, Eczema, Melanoma, etc.).
--   **Method:** Hybrid Segmentation.
-    -   **Primary:** Semantic Segmentation (SegFormer) for face/neck.
-    -   **Fallback:** Robust **HSV+YCbCr Color Detection** for arms, legs, and other body parts where semantic models fail.
-
-### 4. Technical Highlights
--   **"Nerd Mode"**: Real-time debug overlay showing segmentation masks, bounding boxes, and model confidence.
--   **Asynchronous Inference**: Celery + Redis architecture eliminates API timeouts for heavy AI tasks.
--   **Hot-Reloading**: Backend code changes reflect instantly in Docker containers.
+-   **Frontend:** React (Vite) + TailwindCSS. Configured as a Progressive Web App (PWA) with mobile-first design principles.
+-   **Backend:** FastAPI (Python 3.10). Handles high-concurrency requests via Uvicorn.
+-   **AI Inference:** Deployed on a Celery Worker layout with Redis as the message broker. This asynchronous architecture prevents API timeouts during heavy model inference.
+-   **Infrastructure:** Fully Dockerized with Nginx as a reverse proxy/load balancer.
 
 ---
 
-## 🛠️ Tech Stack
+## AI Models & Methodology
 
--   **Frontend**: React, Vite, TailwindCSS (Dark Mode / Glassmorphism UI).
--   **Backend**: FastAPI, Uvicorn, Python 3.10.
--   **AI Engine**: PyTorch, TensorFlow, Google MediaPipe, OpenCV.
--   **Worker/Queue**: Celery, Redis.
--   **Infrastructure**: Docker Compose (Microservices Architecture).
--   **Reverse Proxy**: Nginx.
+### 1. Jaundice Eye Model (Adults)
+Target: **Jaundice Adult**
+-   **Methodology:** Utilizes **Google MediaPipe Face Mesh** to extract 468 facial landmarks.
+-   **Process:**
+    1.  Detects face and eye landmarks in real-time.
+    2.  Extracts the eye region and generates a semantic mask to isolate the **Sclera** (white region) from the Iris and Eyelids.
+    3.  Feeds the masked sclera crop into an **EfficientNet-B4** classifier.
+-   **Advantage:** Eliminates noise from skin tone or iris color, providing a pure analysis of scleral yellowing.
+
+### 2. Jaundice Body Model (Neonates)
+Target: **Jaundice Baby**
+-   **Methodology:** Combines **MediaPipe Selfie Segmentation** with Color Space Analysis.
+-   **Process:**
+    1.  Generates a binary mask of the human subject (removing background walls/bedsheets).
+    2.  Filters skin pixels using HSV/YCbCr thresholds within the subject mask.
+    3.  analyzes the skin tone for hyperbilirubinemia indicators using a custom trained Deep Learning model.
+-   **Advantage:** Prevents false positives caused by yellow ambient environments (e.g., painted walls or blankets).
+
+### 3. Skin Disease Classifer
+Target: **General Dermatology**
+-   **Capability:** Classifies **38 distinct skin conditions** with high granularity.
+-   **Methodology:** Uses a Hybrid Segmentation approach.
+    -   **Primary:** SegFormer (Semantic Segmentation) for face/neck analysis.
+    -   **Fallback:** Adaptive Color Detection for limbs and body parts where facial models fail.
+    
+#### Recognized Skin Classes:
+The model is trained to identify the following 38 conditions:
+1.  Acne
+2.  Actinic Keratosis
+3.  Alopecia Areata
+4.  Basal Cell Carcinoma
+5.  Burn
+6.  Cellulitis
+7.  Chickenpox
+8.  Cold Sore
+9.  Contact Dermatitis
+10. Eczema
+11. Folliculitis
+12. Hives
+13. Impetigo
+14. Melanoma
+15. Merkel Cell Carcinoma
+16. Molluscum Contagiosum
+17. Psoriasis
+18. Rosacea
+19. Seborrheic Dermatitis
+20. Shingles
+21. Squamous Cell Carcinoma
+22. Tinea Corporis (Ringworm)
+23. Tinea Pedis (Athlete's Foot)
+24. Vitiligo
+25. Warts
+26. Measles
+27. Lupus
+28. Scabies
+29. Vascular Tumor
+30. Nevus
+31. Keratosis Pilaris
+32. Melasma
+33. Nail Fungus
+34. Cutaneous Larva Migrans
+35. Erythema Multiforme
+36. Ichthyosis
+37. Lichen Planus
+38. Unknown / Normal Skin
 
 ---
 
-## ⚡ Quick Start
+## Installation & Deployment
 
 ### Prerequisites
--   Docker Desktop installed and running.
--   NVIDIA GPU (Recommended) with Drivers installed.
+-   Docker Desktop
+-   NVIDIA GPU (Recommended for Inference acceleration)
 
-### Installation
+### Quick Start
 
 1.  **Clone the Repository**
     ```bash
@@ -60,43 +104,22 @@ A containerized, mobile-first web application for the early detection of **Neona
     cd "Disease Prediction"
     ```
 
-2.  **Start the Application**
+2.  **Launch via Docker Compose**
     ```bash
     docker compose up --build
     ```
-    *Note: The first build may take a few minutes to install dependencies (PyTorch, MediaPipe).*
 
-3.  **Access the App**
-    -   **Frontend**: [http://localhost:5173](http://localhost:5173)
-    -   **API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-    -   **Flower (Task Monitor)**: [http://localhost:5555](http://localhost:5555) (if enabled)
+3.  **Access the Application**
+    -   Frontend: `http://localhost:5173`
+    -   API Documentation: `http://localhost:8000/docs`
 
 ---
 
-## 🐛 Troubleshooting
+## Development Notes
 
-| Issue | Solution |
-| :--- | :--- |
-| `AttributeError: no attribute 'solutions'` | MediaPipe Dependency fixed. Run `docker compose up --build`. |
-| "No Skin" Result | Ensure good lighting. The model falls back to color detection if face is not found. |
-| API Timeout | The first request might be slow as models "warm up". Subsequent requests are fast. |
+### Hot-Reloading
+The `docker-compose.yml` is configured to mount the source code directories directly. Changes made to `web_app/backend`, `segformer_utils.py`, or `inference_pytorch.py` will be reflected immediately in the container without requiring a rebuild (restart may be required for worker processes).
 
----
-
-## 📂 Project Structure
-
-```
-├── web_app
-│   ├── backend
-│   │   ├── main.py           # FastAPI Entrypoint
-│   │   ├── tasks.py          # Celery Tasks (AI Inference)
-│   │   ├── Dockerfile        # Backend Environment
-│   ├── frontend              # React App
-├── segformer_utils.py        # MediaPipe & Segmentation Logic
-├── inference_pytorch.py      # PyTorch Model Definitions
-├── docker-compose.yml        # Orchestration Config
-```
-
----
-
-**Developed by:** Sarthak Dhiman
+### Troubleshooting
+-   **"No Skin Detected"**: Ensure the subject is well-lit. The fallback color detector requires decent lighting to distinguish skin from background.
+-   **GPU Usage**: By default, the `docker-compose.yml` requests NVIDIA GPU access. If running on CPU, remove the `deploy` and `environment` sections related to NVIDIA.
