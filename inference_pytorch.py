@@ -6,6 +6,8 @@ import timm
 from pathlib import Path
 import sys
 import json
+import threading
+import base64
 
 # --- Configuration ---
 IMG_SIZE = (380, 380) # EfficientNet-B4 Native Resolution
@@ -103,83 +105,123 @@ _body_model = None
 _skin_model = None
 _skin_classes = {}
 
+# Thread-safe model loading locks
+_model_locks = {
+    'eye': threading.Lock(),
+    'body': threading.Lock(),
+    'skin': threading.Lock()
+}
+
 def get_eye_model():
     global _eye_model
-    if _eye_model: return _eye_model
-    path = BASE_DIR / "saved_models" / "jaundice_with_sclera_torch.pth"
-    if not path.exists(): return None
-    try:
-        model = JaundiceModel().to(DEVICE)
-        state_dict = torch.load(path, map_location=DEVICE)
-        model.load_state_dict(state_dict)
-        model.eval()
-        _eye_model = model
-        print("✅ Eye Model Loaded (PyTorch)", flush=True)
+    # Fast path: model already loaded
+    if _eye_model: 
         return _eye_model
-    except Exception as e:
-        print(f"❌ Failed to load Eye Model: {e}", flush=True)
-        return None
+    
+    # Thread-safe loading with double-checked locking
+    with _model_locks['eye']:
+        # Double-check after acquiring lock
+        if _eye_model:
+            return _eye_model
+            
+        path = BASE_DIR / "saved_models" / "jaundice_with_sclera_torch.pth"
+        if not path.exists(): 
+            return None
+            
+        try:
+            print("🔄 Loading Eye Model (Thread-Safe)...", flush=True)
+            model = JaundiceModel().to(DEVICE)
+            state_dict = torch.load(path, map_location=DEVICE)
+            model.load_state_dict(state_dict)
+            model.eval()
+            _eye_model = model
+            print("✅ Eye Model Loaded (PyTorch)", flush=True)
+            return _eye_model
+        except Exception as e:
+            print(f"❌ Failed to load Eye Model: {e}", flush=True)
+            return None
 
 def get_body_model():
     global _body_model
-    if _body_model: return _body_model
-    path = BASE_DIR / "saved_models" / "jaundice_body_pytorch.pth"
-    if not path.exists(): return None
-    try:
-        model = JaundiceBodyModel().to(DEVICE)
-        state_dict = torch.load(path, map_location=DEVICE)
-        model.load_state_dict(state_dict)
-        model.eval()
-        _body_model = model
-        print("✅ Body Model Loaded (PyTorch)", flush=True)
+    # Fast path: model already loaded
+    if _body_model: 
         return _body_model
-    except Exception as e:
-        print(f"❌ Failed to load Body Model: {e}", flush=True)
-        return None
+    
+    # Thread-safe loading with double-checked locking
+    with _model_locks['body']:
+        # Double-check after acquiring lock
+        if _body_model:
+            return _body_model
+            
+        path = BASE_DIR / "saved_models" / "jaundice_body_pytorch.pth"
+        if not path.exists(): 
+            return None
+            
+        try:
+            print("🔄 Loading Body Model (Thread-Safe)...", flush=True)
+            model = JaundiceBodyModel().to(DEVICE)
+            state_dict = torch.load(path, map_location=DEVICE)
+            model.load_state_dict(state_dict)
+            model.eval()
+            _body_model = model
+            print("✅ Body Model Loaded (PyTorch)", flush=True)
+            return _body_model
+        except Exception as e:
+            print(f"❌ Failed to load Body Model: {e}", flush=True)
+            return None
 
 def get_skin_model():
     global _skin_model, _skin_classes
-    if _skin_model: return _skin_model
-    
-    model_path = BASE_DIR / "saved_models" / "skin_disease_pytorch.pth"
-    map_path = BASE_DIR / "saved_models" / "skin_disease_mapping.json"
-    
-    if not model_path.exists() or not map_path.exists(): 
-        print(f"⚠️ Skin model files missing: {model_path} or {map_path}", flush=True)
-        return None
-    
-    try:
-        # Load mapping first
-        with open(map_path, 'r') as f:
-            raw_map = json.load(f)
-            
-        # Ensure mapping is int -> string
-        # Some JSON libs load '0' as string key. We need int keys for lookup if we predict by index.
-        # But wait - usually we just get argmax index.
-        # Let's handle both { "0": "Acne" } and { "Acne": 0 }
-        
-        # Heuristic: if values are ints, it's {Class: Index}. Invert it.
-        first_val = list(raw_map.values())[0]
-        if isinstance(first_val, int):
-            _skin_classes = {v: k for k, v in raw_map.items()}
-        else:
-            # It's {"0": "Acne"}. Convert keys to int.
-            _skin_classes = {int(k): v for k, v in raw_map.items()}
-            
-        num_classes = len(_skin_classes)
-        
-        model = SkinDiseaseModel(num_classes=num_classes).to(DEVICE)
-        state_dict = torch.load(model_path, map_location=DEVICE)
-        model.load_state_dict(state_dict)
-        model.eval()
-        _skin_model = model
-        print(f"✅ Skin Model Loaded (PyTorch) - {num_classes} classes", flush=True)
+    # Fast path: model already loaded
+    if _skin_model: 
         return _skin_model
-    except Exception as e:
-        print(f"❌ Failed to load Skin Model: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        return None
+    
+    # Thread-safe loading with double-checked locking
+    with _model_locks['skin']:
+        # Double-check after acquiring lock
+        if _skin_model:
+            return _skin_model
+            
+        model_path = BASE_DIR / "saved_models" / "skin_disease_pytorch.pth"
+        map_path = BASE_DIR / "saved_models" / "skin_disease_mapping.json"
+        
+        if not model_path.exists() or not map_path.exists(): 
+            print(f"⚠️ Skin model files missing: {model_path} or {map_path}", flush=True)
+            return None
+        
+        try:
+            print("🔄 Loading Skin Model (Thread-Safe)...", flush=True)
+            # Load mapping first
+            with open(map_path, 'r') as f:
+                raw_map = json.load(f)
+                
+            # Ensure mapping is int -> string
+            # Some JSON libs load '0' as string key. We need int keys for lookup if we predict by index.
+            # But wait - usually we just get argmax index.
+            # Let's handle both { "0": "Acne" } and { "Acne": 0 }
+            
+            # Heuristic: if values are ints, it's {Class: Index}. Invert it.
+            first_val = list(raw_map.values())[0]
+            if isinstance(first_val, int):
+                _skin_classes = {v: k for k, v in raw_map.items()}
+            else:
+                # It's {"0": "Acne"}. Convert keys to int.
+                _skin_classes = {int(k): v for k, v in raw_map.items()}
+                
+            num_classes = len(_skin_classes)
+            
+            model = SkinDiseaseModel(num_classes=num_classes).to(DEVICE)
+            state_dict = torch.load(model_path, map_location=DEVICE)
+            model.load_state_dict(state_dict)
+            model.eval()
+            _skin_model = model
+            print(f"✅ Skin Model Loaded (PyTorch) - {num_classes} classes", flush=True)
+            return _skin_model
+        except Exception as e:
+            print(f"❌ Failed to load Skin Model: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return None
 
 # --- Prediction Functions ---
 

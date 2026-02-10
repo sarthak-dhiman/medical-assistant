@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
-# Lazy Global Models
+# Import inference service layer
+from .inference_service import inference_service
+
+# Lazy Global Models (Segmentation only - inference delegated to service)
 seg_model = None
-jaundice_eye_model = None
-jaundice_skin_model = None
-skin_disease_model = None
 init_errors = [] # Persistent global errors
 
 def encode_mask_b64(mask):
@@ -65,52 +65,11 @@ def load_models():
             logger.error(err_msg)
             temp_errors.append(err_msg)
             
-    # 1. Jaundice Eye Model (PyTorch)
-    if jaundice_eye_model is None:
-        try:
-            from inference_pytorch import predict_jaundice_eye
-            logger.info("Warming Jaundice Eye Model (PyTorch)...")
-            # Warm up with actual inference to initialize CUDA kernels
-            dummy_skin = np.zeros((380,380,3), dtype=np.uint8)
-            dummy_sclera = np.zeros((64,64,3), dtype=np.uint8)
-            for _ in range(3):  # Run 3 times to ensure JIT compilation
-                predict_jaundice_eye(dummy_skin, dummy_sclera)
-            jaundice_eye_model = predict_jaundice_eye
-            logger.info("✅ Jaundice Eye Model Ready") 
-        except Exception as e:
-            err_msg = f"Failed to load Jaundice Eye: {e}"
-            logger.error(err_msg)
-            temp_errors.append(err_msg)
-            
-    # 2. Jaundice Body Model (PyTorch) - Replaces Keras
-    if jaundice_skin_model is None:
-        try:
-            from inference_pytorch import predict_jaundice_body
-            logger.info("Warming Jaundice Body Model (PyTorch)...")
-            dummy_img = np.zeros((380, 380, 3), dtype=np.uint8)
-            for _ in range(3):  # Run 3 times to ensure JIT compilation
-                predict_jaundice_body(dummy_img)
-            jaundice_skin_model = predict_jaundice_body
-            logger.info("✅ Jaundice Body Model Ready")
-        except Exception as e:
-            err_msg = f"Failed to load Jaundice Body: {e}"
-            logger.error(err_msg)
-            temp_errors.append(err_msg)
-
-    # 3. Skin Disease Model (PyTorch) - Replaces Keras
-    if skin_disease_model is None:
-        try:
-            from inference_pytorch import predict_skin_disease_torch
-            logger.info("Warming Skin Disease Model (PyTorch)...")
-            dummy_img = np.zeros((380, 380, 3), dtype=np.uint8)
-            for _ in range(3):  # Run 3 times to ensure JIT compilation
-                predict_skin_disease_torch(dummy_img)
-            skin_disease_model = predict_skin_disease_torch
-            logger.info("✅ Skin Disease Model Ready")
-        except Exception as e:
-            err_msg = f"Failed to load Skin Disease: {e}"
-            logger.error(err_msg)
-            temp_errors.append(err_msg)
+    # Models are now loaded lazily via inference_service (thread-safe)
+    # We only need to warm up SegFormer here
+    
+    # Note: Jaundice and Skin models are loaded on-demand by inference_service
+    # with thread-safe locks, so we don't need to pre-load them here
             
     for err in temp_errors:
         if err not in init_errors:
@@ -140,25 +99,17 @@ def check_model_health(self):
     Simple probe to check if models are loaded in the worker.
     Returns: dict of model statuses
     """
-    global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model
+    global seg_model
     status = {
         "seg_model": seg_model is not None,
-        "jaundice_eye_model": jaundice_eye_model is not None,
-        "jaundice_skin_model": jaundice_skin_model is not None,
-        "skin_disease_model": skin_disease_model is not None,
+        "inference_service": "ready",  # Service layer is always available
         "config": {
            "device": os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set"),
            "omp_threads": os.environ.get("OMP_NUM_THREADS", "Not Set")
-        }
+        },
+        "errors": init_errors,
+        "ready": seg_model is not None and len(init_errors) == 0
     }
-    
-    # Check if any errors occurred during load
-    init_errors = load_models()
-    if init_errors:
-       status["errors"] = init_errors
-
-    # Return True only if ALL critical models are loaded
-    status["ready"] = all([status[k] for k in ["seg_model", "jaundice_eye_model", "jaundice_skin_model", "skin_disease_model"]])
     return status
 
 @celery_app.task(bind=True)
@@ -266,10 +217,8 @@ def predict_task(self, image_data_b64, mode, debug=False):
                   elif crop.shape[2] != 3:
                       crop = crop[:, :, :3]
                   
-                  # Skin Jaundice stays on TensorFlow
-                  # Skin Jaundice stays on TensorFlow
-                  # UPDATED: Returns debug_info
-                  label, conf, debug_info = jaundice_skin_model(crop, debug=debug)
+                  # Use inference service for prediction
+                  label, conf, debug_info = inference_service.predict_jaundice_body(crop, debug=debug)
                   
                   # Add Masks to debug_info
                   if "masks" not in debug_info: debug_info["masks"] = {}
@@ -329,9 +278,8 @@ def predict_task(self, image_data_b64, mode, debug=False):
                 if skin_crop is None or skin_crop.size == 0:
                     skin_crop = frame 
 
-                # Jaundice Eye detection uses PyTorch Wrapper
-                # UPDATED: Returns debug_info
-                label, conf, debug_info = jaundice_eye_model(skin_crop, cropped_eye_masked, debug=debug)
+                # Use inference service for prediction
+                label, conf, debug_info = inference_service.predict_jaundice_eye(skin_crop, cropped_eye_masked, debug=debug)
                 
                 # Add Eye Mask to debug_info
                 # (Note: cropped_eye_masked is already the Sclera Mask applied to image)
@@ -389,8 +337,8 @@ def predict_task(self, image_data_b64, mode, debug=False):
                   elif crop.shape[2] != 3:
                       crop = crop[:, :, :3]
                   
-                  # UPDATED: Returns debug_info
-                  label, conf, debug_info = skin_disease_model(crop, debug=debug)
+                  # Use inference service for prediction
+                  label, conf, debug_info = inference_service.predict_skin_disease(crop, debug=debug)
                   
                   if "masks" not in debug_info: debug_info["masks"] = {}
                   debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
