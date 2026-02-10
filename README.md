@@ -51,42 +51,42 @@ Target: **General Dermatology**
 The model is trained to identify the following 38 conditions:
 1.  Acne
 2.  Actinic Keratosis
-3.  Alopecia Areata
-4.  Basal Cell Carcinoma
-5.  Burn
-6.  Cellulitis
-7.  Chickenpox
-8.  Cold Sore
-9.  Contact Dermatitis
-10. Eczema
-11. Folliculitis
-12. Hives
-13. Impetigo
-14. Melanoma
-15. Merkel Cell Carcinoma
-16. Molluscum Contagiosum
-17. Psoriasis
-18. Rosacea
-19. Seborrheic Dermatitis
-20. Shingles
-21. Squamous Cell Carcinoma
-22. Tinea Corporis (Ringworm)
-23. Tinea Pedis (Athlete's Foot)
-24. Vitiligo
-25. Warts
-26. Measles
-27. Lupus
-28. Scabies
-29. Vascular Tumor
-30. Nevus
-31. Keratosis Pilaris
-32. Melasma
-33. Nail Fungus
-34. Cutaneous Larva Migrans
-35. Erythema Multiforme
-36. Ichthyosis
-37. Lichen Planus
-38. Unknown / Normal Skin
+3.  Atopic Dermatitis
+4.  Benign Tumors
+5.  Bullous Diseases
+6.  Candidiasis
+7.  Cellulitis & Impetigo
+8.  Contact Dermatitis
+9.  Drug Eruption
+10. Dry Skin
+11. Eczema
+12. Herpes, HPV & STD
+13. Infestations & Bites
+14. Lichen
+15. Lupus
+16. Moles
+17. Monkeypox
+18. Normal
+19. Oily Skin
+20. Perioral Dermatitis
+21. Pigment Disorders
+22. Psoriasis
+23. Rosacea
+24. Scabies
+25. Sebaceous Glands
+26. Seborrheic Keratoses
+27. Seborrheic Dermatitis
+28. Skin Cancer
+29. Sun & Sunlight Damage
+30. Systemic Disease
+31. Tinea (Fungal)
+32. Tinea (General)
+33. Unknown / Normal
+34. Urticaria & Hives
+35. Vascular Tumors
+36. Vasculitis
+37. Vitiligo
+38. Warts
 
 ---
 

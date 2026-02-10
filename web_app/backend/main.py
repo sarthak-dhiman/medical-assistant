@@ -8,7 +8,15 @@ from .celery_app import celery_app
 from .tasks import predict_task
 from .config import settings
 
-# --- Logging Setup ---
+import datetime
+
+# --- IST Logging Configuration ---
+def ist_converter(*args):
+    # IST = UTC + 5:30
+    return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)).timetuple()
+
+logging.Formatter.converter = ist_converter
+
 logging.basicConfig(
     stream=sys.stdout,
     level=settings.LOG_LEVEL,

@@ -27,6 +27,7 @@ services:
       # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TZ=Asia/Kolkata
     deploy:
       resources:
         limits:
@@ -65,6 +66,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - OMP_NUM_THREADS=4
+      - TZ=Asia/Kolkata
     deploy:
       resources:
         limits:
@@ -90,6 +92,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - FLOWER_BASIC_AUTH=admin:${FLOWER_PASSWORD:-changeme123}
+      - TZ=Asia/Kolkata
     depends_on:
       - redis
     networks:
@@ -104,6 +107,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TZ=Asia/Kolkata
     deploy:
       resources:
         reservations:

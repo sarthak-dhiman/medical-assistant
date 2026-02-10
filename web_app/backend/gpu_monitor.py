@@ -1,8 +1,14 @@
 import time
 import pynvml
+import datetime
 import logging
-import os
 
+# --- IST Logging Configuration ---
+def ist_converter(*args):
+    # IST = UTC + 5:30
+    return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)).timetuple()
+
+logging.Formatter.converter = ist_converter
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("GPU-Monitor")
 

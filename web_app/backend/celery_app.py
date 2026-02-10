@@ -12,7 +12,7 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    timezone="UTC",
+    timezone="Asia/Kolkata",
     enable_utc=True,
     # Worker optimization
     worker_concurrency=1, # One worker since models are heavy and single-threaded usually better for stability

@@ -8,6 +8,15 @@ from pathlib import Path
 from .celery_app import celery_app
 from .config import settings
 
+import datetime
+
+# --- IST Logging Configuration ---
+def ist_converter(*args):
+    # IST = UTC + 5:30
+    return (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)).timetuple()
+
+logging.Formatter.converter = ist_converter
+
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
 
