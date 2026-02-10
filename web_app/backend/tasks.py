@@ -337,5 +337,58 @@ def predict_task(self, image_data_b64, mode, debug=False):
                   })
              else:
                   result.update({"label": "No Skin", "confidence": 0.0})
+    
+    elif mode == "BURNS":
+        # Burns detection on skin
+        if cv2.countNonZero(skin_mask) > 100:
+            y, x = np.where(skin_mask > 0)
+            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+            crop = frame[y0:y1, x0:x1]
+            
+            if len(crop.shape) == 2:
+                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+            elif crop.shape[2] != 3:
+                crop = crop[:, :, :3]
+            
+            label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
+            
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            
+            result.update({
+                "label": label,
+                "confidence": float(conf),
+                "bbox": [x0/w, y0/h, x1/w, y1/h],
+                "debug_info": debug_info
+            })
+        else:
+            result.update({"label": "No Skin", "confidence": 0.0})
+    
+    elif mode == "HAIRLOSS":
+        # Hairloss detection on scalp
+        label, conf, debug_info = inference_service.predict_hairloss(frame, debug=debug)
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info
+        })
+    
+    elif mode == "NAIL_DISEASE":
+        # Nail disease detection
+        label, conf, debug_info = inference_service.predict_nail_disease(frame, debug=debug)
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info
+        })
+    
+    elif mode == "PRESSURE_ULCER":
+        # Pressure ulcer staging
+        label, conf, debug_info = inference_service.predict_pressure_ulcer(frame, debug=debug)
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info
+        })
 
     return result

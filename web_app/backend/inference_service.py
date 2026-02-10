@@ -16,6 +16,13 @@ from inference_pytorch import (
     predict_skin_disease_torch
 )
 
+from inference_new_models import (
+    predict_burns,
+    predict_hairloss,
+    predict_nail_disease,
+    predict_pressure_ulcer
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +85,42 @@ class InferenceService:
             return predict_skin_disease_torch(img_bgr, debug)
         except Exception as e:
             logger.error(f"Skin Disease inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
+    def predict_burns(img_bgr, debug=False):
+        """Predict burn detection"""
+        try:
+            return predict_burns(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Burns inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
+    def predict_hairloss(img_bgr, debug=False):
+        """Predict hairloss detection"""
+        try:
+            return predict_hairloss(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Hairloss inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
+    def predict_nail_disease(img_bgr, debug=False):
+        """Predict nail disease"""
+        try:
+            return predict_nail_disease(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Nail Disease inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
+    def predict_pressure_ulcer(img_bgr, debug=False):
+        """Predict pressure ulcer stage"""
+        try:
+            return predict_pressure_ulcer(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Pressure Ulcer inference failed: {e}")
             return "Error", 0.0, {"error": str(e)}
 
 

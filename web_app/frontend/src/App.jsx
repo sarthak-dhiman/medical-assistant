@@ -57,6 +57,10 @@ function App() {
     { id: 'JAUNDICE_BODY', label: 'Jaundice Baby', shortLabel: 'Baby', icon: <User className="w-5 h-5" /> },
     { id: 'JAUNDICE_EYE', label: 'Jaundice Adult', shortLabel: 'Adult', icon: <Eye className="w-5 h-5" /> },
     { id: 'SKIN_DISEASE', label: 'Skin Disease', shortLabel: 'Skin', icon: <Stethoscope className="w-5 h-5" /> },
+    { id: 'BURNS', label: 'Burns Detection', shortLabel: 'Burns', icon: <Stethoscope className="w-5 h-5" /> },
+    { id: 'HAIRLOSS', label: 'Hairloss Analysis', shortLabel: 'Hair', icon: <User className="w-5 h-5" /> },
+    { id: 'NAIL_DISEASE', label: 'Nail Disease', shortLabel: 'Nail', icon: <Stethoscope className="w-5 h-5" /> },
+    { id: 'PRESSURE_ULCER', label: 'Pressure Ulcer', shortLabel: 'Ulcer', icon: <Stethoscope className="w-5 h-5" /> },
   ]
 
   const handleUpload = (e) => {
@@ -207,8 +211,8 @@ function App() {
             <button
               onClick={() => setIsNerdMode(!isNerdMode)}
               className={`p-2.5 rounded-full transition-all active:scale-90 border shadow-md ${isNerdMode
-                  ? 'bg-purple-600/80 text-white border-purple-400'
-                  : 'bg-gray-800 text-gray-500 border-gray-700'
+                ? 'bg-purple-600/80 text-white border-purple-400'
+                : 'bg-gray-800 text-gray-500 border-gray-700'
                 }`}
             >
               <Bug className="w-6 h-6" />
