@@ -206,9 +206,83 @@ def _preprocess_img(img_bgr, size=(380,380)):
     
     return torch.tensor(img_batch, dtype=torch.float32).to(DEVICE)
 
-def predict_jaundice_eye(skin_img, sclera_crop=None):
+# --- GRAD-CAM UTILS ---
+class GradCAM:
+    def __init__(self, model, target_layer):
+        self.model = model
+        self.target_layer = target_layer
+        self.gradients = None
+        self.activations = None
+        
+        # Register hooks
+        # print(f"DEBUG: Registering hooks on {target_layer}", flush=True)
+        self.hook_a = target_layer.register_forward_hook(self.save_activation)
+        self.hook_g = target_layer.register_full_backward_hook(self.save_gradient)
+        
+    def save_activation(self, module, input, output):
+        # print(f"DEBUG: Activation captured. Shape: {output.shape}", flush=True)
+        self.activations = output
+        
+    def save_gradient(self, module, grad_input, grad_output):
+        # Gradients are typically tuple (grad_output,)
+        # print(f"DEBUG: Gradient captured. Shape: {grad_output[0].shape}", flush=True)
+        self.gradients = grad_output[0]
+        
+    def generate(self, class_idx=None):
+        if self.gradients is None or self.activations is None:
+            print("DEBUG: Grad-CAM failed - Missing gradients or activations", flush=True)
+            return None
+            
+        # Pool the gradients across the channels
+        pooled_gradients = torch.mean(self.gradients, dim=[0, 2, 3])
+        
+        # Get activations of the last conv layer
+        activations = self.activations.detach()
+        
+        # Weight the channels by corresponding gradients
+        for i in range(activations.size(1)):
+            activations[:, i, :, :] *= pooled_gradients[i]
+            
+        # Average the channels of the weighted activations
+        heatmap = torch.mean(activations, dim=1).squeeze()
+        
+        # ReLU on top
+        heatmap = np.maximum(heatmap.cpu().numpy(), 0)
+        
+        # Normalize
+        heatmap /= np.max(heatmap) + 1e-8
+        
+        return heatmap
+        
+    def remove_hooks(self):
+        self.hook_a.remove()
+        self.hook_g.remove()
+
+def generate_heatmap_overlay(heatmap, img_bgr):
+    """Overlays heatmap on original image."""
+    try:
+        h, w = img_bgr.shape[:2]
+        heatmap = cv2.resize(heatmap, (w, h))
+        
+        # Colorize
+        heatmap = np.uint8(255 * heatmap)
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        
+        # Overlay
+        superimposed_img = heatmap * 0.4 + img_bgr * 0.6
+        superimposed_img = np.clip(superimposed_img, 0, 255).astype(np.uint8)
+        
+        # Encode
+        _, buffer = cv2.imencode('.jpg', superimposed_img)
+        b64 = base64.b64encode(buffer).decode('utf-8')
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception as e:
+        print(f"Error generating heatmap: {e}")
+        return ""
+
+def predict_jaundice_eye(skin_img, sclera_crop=None, debug=False):
     model = get_eye_model()
-    if not model: return "Model Missing", 0.0
+    if not model: return "Model Missing", 0.0, {}
     
     # Preprocess Skin - MATCH NEW TRAINING: ImageNet normalization
     skin_resized = cv2.resize(skin_img, IMG_SIZE)
@@ -235,9 +309,55 @@ def predict_jaundice_eye(skin_img, sclera_crop=None):
     sclera_chw = np.transpose(sclera_norm, (2, 0, 1))
     sclera_t = torch.tensor(np.expand_dims(sclera_chw, axis=0), dtype=torch.float32).to(DEVICE)
         
-    with torch.no_grad():
-        logits = model(skin_t, sclera_t)
-        prob = torch.sigmoid(logits).item()
+    debug_info = {}
+    
+    # Context Manager for Gradients
+    # If debug=True, we need gradients for GradCAM. Else no_grad for speed.
+    context = torch.enable_grad() if debug else torch.no_grad()
+    
+    grad_cam = None
+    if debug:
+        # Hook the last conv layer of the Skin Backbone (EfficientNet)
+        # timm efficientnet usually has 'conv_head' or 'blocks'
+        if hasattr(model.skin_backbone, 'conv_head'):
+             target_layer = model.skin_backbone.conv_head
+        elif hasattr(model.skin_backbone, 'blocks'):
+             target_layer = model.skin_backbone.blocks[-1]
+        else:
+             print("DEBUG: Could not find target layer for Grad-CAM", flush=True)
+             target_layer = list(model.skin_backbone.children())[-1]
+             
+        grad_cam = GradCAM(model, target_layer)
+        
+    try:
+        with context:
+            logits = model(skin_t, sclera_t)
+            prob = torch.sigmoid(logits).item()
+            
+            if debug and grad_cam:
+                # Backward for Grad-CAM
+                score = logits[0] # Single output
+                model.zero_grad()
+                score.backward(retain_graph=False)
+                
+                heatmap = grad_cam.generate()
+                if heatmap is not None:
+                     # Overlay on Skin Image (Original Resize)
+                     overlay = generate_heatmap_overlay(heatmap, skin_resized)
+                     debug_info["grad_cam"] = overlay
+                     
+    except torch.cuda.OutOfMemoryError:
+        print("❌ CRITICAL: GPU Out Of Memory in Jaundice Eye Inference!", flush=True)
+        return "GPU_OOM", 0.0, {"status": "oom_error"}
+    except Exception as e:
+        print(f"❌ Inference Error: {e}", flush=True)
+        return "Error", 0.0, {}
+    finally:
+        if grad_cam:
+            grad_cam.remove_hooks()
+            model.zero_grad() # Cleanup
+    
+    # Standard threshold after retraining with balanced data
     
     # Standard threshold after retraining with balanced data
     threshold = 0.5
@@ -248,17 +368,78 @@ def predict_jaundice_eye(skin_img, sclera_crop=None):
     else:
         conf = 1.0 - prob  # Confidence in Normal
     
-    return label, conf
+    # --- NERD MODE STATS ---
+    # debug_info is already initialized
+    
+    # 1. Color Stats (Sclera)
+    # sclera_crop is BGR. Calculate Mean HSV/RGB
+    if sclera_crop is not None and sclera_crop.size > 0:
+        # Mean RGB (BGR -> RGB)
+        mean_bgr = np.mean(sclera_crop, axis=(0,1))
+        mean_rgb = list(mean_bgr[::-1]) # BGR to RGB
+        
+        # Mean HSV
+        hsv_img = cv2.cvtColor(sclera_crop, cv2.COLOR_BGR2HSV)
+        mean_hsv = list(np.mean(hsv_img, axis=(0,1)))
+        
+        debug_info["color_stats"] = {
+            "mean_rgb": [int(x) for x in mean_rgb],
+            "mean_hsv": [int(x) for x in mean_hsv]
+        }
+        
+    # 2. Sclera Mask (Not available here, as mask generation happens in tasks.py/SegFormer)
+    # We will attach the mask in tasks.py
+    
+    return label, conf, debug_info
 
-def predict_jaundice_body(img_bgr):
+def predict_jaundice_body(img_bgr, debug=False):
     model = get_body_model()
-    if not model: return "Model Missing", 0.0
+    if not model: return "Model Missing", 0.0, {}
     
     img_t = _preprocess_img(img_bgr, size=IMG_SIZE)
-    with torch.no_grad():
-        logits = model(img_t)
-        prob = torch.sigmoid(logits).item()
     
+    debug_info = {}
+    context = torch.enable_grad() if debug else torch.no_grad()
+    grad_cam = None
+    
+    if debug:
+        # Hook backbone conv_head
+        if hasattr(model.backbone, 'conv_head'):
+             target_layer = model.backbone.conv_head
+        else:
+             target_layer = list(model.backbone.children())[-1]
+        grad_cam = GradCAM(model, target_layer)
+        
+    try:
+         with context:
+            logits = model(img_t)
+            prob = torch.sigmoid(logits).item()
+            
+            if debug and grad_cam:
+                score = logits[0]
+                model.zero_grad()
+                score.backward(retain_graph=False)
+                
+                heatmap = grad_cam.generate()
+                if heatmap is not None:
+                     # Resize img_bgr to model input size for overlay consistency
+                     # or just overlay on resized inputs.
+                     # Let's resize original to match heatmap (380x380) for display
+                     disp_img = cv2.resize(img_bgr, IMG_SIZE)
+                     overlay = generate_heatmap_overlay(heatmap, disp_img)
+                     debug_info["grad_cam"] = overlay
+                     
+    except torch.cuda.OutOfMemoryError:
+        print("❌ CRITICAL: GPU Out Of Memory in Jaundice Body Inference!", flush=True)
+        return "GPU_OOM", 0.0, {"status": "oom_error"}
+    except Exception as e:
+        print(f"❌ Inference Error: {e}", flush=True)
+        return "Error", 0.0, {}
+    finally:
+        if grad_cam:
+            grad_cam.remove_hooks()
+            model.zero_grad()
+
     # STRICTER THRESHOLD: Model trained on babies, less reliable on adults
     # Require 70% confidence instead of 50% to reduce false positives
     threshold = 0.70
@@ -270,25 +451,87 @@ def predict_jaundice_body(img_bgr):
     else:
         conf = 1.0 - prob  # Confidence in Normal prediction
     
-    return label, conf
+    # --- NERD MODE STATS ---
+    # debug_info already initialized
+    
+    # Color Stats (Body Crop) - Calculate average color of the input image
+    # Note: img_bgr is likely the cropped skin area (or full frame if body segmentation failed)
+    mean_bgr = np.mean(img_bgr, axis=(0,1))
+    mean_rgb = list(mean_bgr[::-1])
+    hsv_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    mean_hsv = list(np.mean(hsv_img, axis=(0,1)))
+    
+    debug_info["color_stats"] = {
+        "mean_rgb": [int(x) for x in mean_rgb],
+        "mean_hsv": [int(x) for x in mean_hsv]
+    }
+    
+    return label, conf, debug_info
 
-def predict_skin_disease_torch(img_bgr):
+def predict_skin_disease_torch(img_bgr, debug=False):
     model = get_skin_model()
-    if not model: return "Model Missing", 0.0
+    if not model: return "Model Missing", 0.0, {}
     
     img_t = _preprocess_img(img_bgr, size=IMG_SIZE)
-    with torch.no_grad():
-        logits = model(img_t)
-        probs = torch.softmax(logits, dim=1)
-        conf, idx = torch.max(probs, 1)
-        
-    idx = idx.item()
-    conf = conf.item()
     
+    debug_info = {}
+    context = torch.enable_grad() if debug else torch.no_grad()
+    grad_cam = None
+    
+    if debug:
+        if hasattr(model.backbone, 'conv_head'):
+            target_layer = model.backbone.conv_head
+        else:
+            target_layer = list(model.backbone.children())[-1]
+            
+        grad_cam = GradCAM(model, target_layer)
+        
+    try:
+        with context:
+            logits = model(img_t)
+            probs = torch.softmax(logits, dim=1)
+            conf_t, idx_t = torch.max(probs, 1)
+            
+            idx = idx_t.item()
+            conf = conf_t.item()
+            
+            if debug and grad_cam:
+                # Backward on the winning class
+                score = logits[0, idx]
+                model.zero_grad()
+                score.backward(retain_graph=False)
+                
+                heatmap = grad_cam.generate()
+                if heatmap is not None:
+                     disp_img = cv2.resize(img_bgr, IMG_SIZE)
+                     overlay = generate_heatmap_overlay(heatmap, disp_img)
+                     debug_info["grad_cam"] = overlay
+                     
+    finally:
+        if grad_cam:
+            grad_cam.remove_hooks()
+            model.zero_grad()
+        
     # Default to "Normal" if confidence < 80% to reduce false positives
     if conf < 0.80:
         label = "Normal"
     else:
         label = _skin_classes.get(idx, f"Unknown Class {idx}")
     
-    return label, conf
+    # --- NERD MODE STATS ---
+    # debug_info already initialized
+    
+    # Top-3 Probabilities
+    topk_conf, topk_idx = torch.topk(probs, min(3, len(_skin_classes)))
+    topk_conf = topk_conf[0].cpu().numpy()
+    topk_idx = topk_idx[0].cpu().numpy()
+    
+    top_3 = []
+    for i in range(len(topk_idx)):
+        class_name = _skin_classes.get(int(topk_idx[i]), f"Class {topk_idx[i]}")
+        score = float(topk_conf[i])
+        top_3.append({"label": class_name, "confidence": score})
+        
+    debug_info["top_3"] = top_3
+    
+    return label, conf, debug_info

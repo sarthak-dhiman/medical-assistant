@@ -15,4 +15,6 @@ tqdm
 numpy<2  # PyTorch 2.2.0 requires NumPy 1.x
 mediapipe==0.10.9
 protobuf<4.0.0
+flower
+nvidia-ml-py3  # For GPU monitoring
 

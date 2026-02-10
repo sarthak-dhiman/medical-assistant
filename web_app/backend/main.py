@@ -33,6 +33,7 @@ app.add_middleware(
 class PredictRequest(BaseModel):
     image: str # Base64 encoded image
     mode: str  # JAUNDICE_BODY, JAUNDICE_EYE, SKIN_DISEASE
+    debug: bool = False # Enable Graduate-CAM and extended stats
 
     @validator('image')
     def validate_image(cls, v):

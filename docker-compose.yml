@@ -18,8 +18,6 @@ services:
     volumes:
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
       - ./web_app/backend:/app/web_app/backend # Dev code sync
-      # Mount __init__.py to ensure web_app is treated as a package
-      - ./web_app/__init__.py:/app/web_app/__init__.py
       - ./segformer_utils.py:/app/segformer_utils.py # Mount root files
       - ./inference_pytorch.py:/app/inference_pytorch.py
     environment:
@@ -58,9 +56,6 @@ services:
     command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1
     volumes:
       - ./saved_models:/app/saved_models
-      - ./web_app/backend:/app/web_app/backend
-      # Mount __init__.py to ensure web_app is treated as a package
-      - ./web_app/__init__.py:/app/web_app/__init__.py
       - ./segformer_utils.py:/app/segformer_utils.py
       - ./inference_pytorch.py:/app/inference_pytorch.py
       - hf_cache:/root/.cache/huggingface
@@ -72,6 +67,8 @@ services:
       - OMP_NUM_THREADS=4
     deploy:
       resources:
+        limits:
+          memory: 6G
         reservations:
           devices:
             - driver: nvidia
@@ -82,7 +79,43 @@ services:
     networks:
       - app-network
 
-  # 4. Frontend
+  # 4. Monitoring (Flower)
+  flower:
+    build:
+      context: .
+      dockerfile: web_app/backend/Dockerfile
+    command: celery -A web_app.backend.celery_app flower --port=5555 --basic_auth=admin:${FLOWER_PASSWORD:-changeme123}
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - FLOWER_BASIC_AUTH=admin:${FLOWER_PASSWORD:-changeme123}
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  # 5. GPU Monitor (Sidecar)
+  gpu-monitor:
+    build:
+      context: .
+      dockerfile: web_app/backend/Dockerfile
+    command: python web_app/backend/gpu_monitor.py
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # 6. Frontend
   frontend:
     build:
       context: .

@@ -23,6 +23,22 @@ jaundice_skin_model = None
 skin_disease_model = None
 init_errors = [] # Persistent global errors
 
+def encode_mask_b64(mask):
+    """Encodes a single-channel mask (uint8) to base64 PNG."""
+    try:
+        if mask is None: return None
+        # Ensure it's visualizable (0 or 255)
+        visual_mask = mask.copy()
+        if visual_mask.max() <= 1:
+             visual_mask = visual_mask * 255
+             
+        success, buffer = cv2.imencode('.png', visual_mask)
+        if not success: return None
+        b64 = base64.b64encode(buffer).decode('utf-8')
+        return f"data:image/png;base64,{b64}"
+    except Exception:
+        return None
+
 def load_models():
     """Loads models once per worker process (Unified PyTorch Engine)."""
     global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model, init_errors
@@ -137,7 +153,7 @@ def check_model_health(self):
     return status
 
 @celery_app.task(bind=True)
-def predict_task(self, image_data_b64, mode):
+def predict_task(self, image_data_b64, mode, debug=False):
     # FAST FAIL: Check if models loaded correctly during init
     if mode == "JAUNDICE_EYE":
         if jaundice_eye_model is None:
@@ -165,8 +181,13 @@ def predict_task(self, image_data_b64, mode):
             if "image/" not in header:
                  logger.warning(f"Suspicious image header: {header}")
         
-        # Safe decoding
-        image_bytes = base64.b64decode(image_data_b64, validate=True)
+        # Safe decoding with proper error handling
+        try:
+            image_bytes = base64.b64decode(image_data_b64, validate=True)
+        except Exception as b64_err:
+            logger.error(f"Base64 validation failed: {b64_err}")
+            return {"status": "error", "error": "Invalid base64 encoding"}
+            
         # Convert bytes to numpy array
         nparr = np.frombuffer(image_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -174,18 +195,12 @@ def predict_task(self, image_data_b64, mode):
         if frame is None:
             raise ValueError("Failed to decode image from bytes")
 
+    except ValueError as ve:
+        logger.error(f"Image Decoding Failed: {ve}")
+        return {"status": "error", "error": str(ve)}
     except Exception as e:
-        logger.error(f"Image Decoding Failed: {e}")
+        logger.error(f"Unexpected error during image processing: {e}")
         return {"status": "error", "error": "Invalid Image Data"}
-
-        nparr = np.frombuffer(base64.b64decode(image_data_b64), np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if frame is None:
-            return {"status": "error", "error": "Invalid Image"}
-            
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
 
     # Logic from webcam_app.py (Simplified for API)
     result = {"status": "success", "mode": mode}
@@ -243,11 +258,20 @@ def predict_task(self, image_data_b64, mode):
                       crop = crop[:, :, :3]
                   
                   # Skin Jaundice stays on TensorFlow
-                  label, conf = jaundice_skin_model(crop)
+                  # Skin Jaundice stays on TensorFlow
+                  # UPDATED: Returns debug_info
+                  label, conf, debug_info = jaundice_skin_model(crop, debug=debug)
+                  
+                  # Add Masks to debug_info
+                  if "masks" not in debug_info: debug_info["masks"] = {}
+                  debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+                  debug_info["masks"]["person_mask"] = encode_mask_b64(person_mask)
+                  
                   result.update({
                       "label": label, 
                       "confidence": float(conf), 
-                      "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
+                      "bbox": [x0/w, y0/h, x1/w, y1/h], # Normalized
+                      "debug_info": debug_info
                   })
              else:
                   result.update({"label": "No Skin on Body", "confidence": 0.0})
@@ -297,7 +321,16 @@ def predict_task(self, image_data_b64, mode):
                     skin_crop = frame 
 
                 # Jaundice Eye detection uses PyTorch Wrapper
-                label, conf = jaundice_eye_model(skin_crop, cropped_eye_masked)
+                # UPDATED: Returns debug_info
+                label, conf, debug_info = jaundice_eye_model(skin_crop, cropped_eye_masked, debug=debug)
+                
+                # Add Eye Mask to debug_info
+                # (Note: cropped_eye_masked is already the Sclera Mask applied to image)
+                # Ideally we want the actual Sclera Mask used.
+                # But for now, let's just send the Global Skin Mask as context
+                if "masks" not in debug_info: debug_info["masks"] = {}
+                debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+                
                 
                 if label == "Jaundice":
                     any_jaundice = True
@@ -308,7 +341,8 @@ def predict_task(self, image_data_b64, mode):
                     "confidence": float(conf),
                     "bbox": [x1/w, y1/h, x2/w, y2/h], # Normalized
                     "method": "mediapipe" if used_mediapipe else "hough",
-                    "debug_image": debug_img_str # Store per eye
+                    "debug_image": debug_img_str, # Store per eye
+                    "debug_info": debug_info
                 }
                 
                 found_eyes.append(eye_result)
@@ -346,11 +380,17 @@ def predict_task(self, image_data_b64, mode):
                   elif crop.shape[2] != 3:
                       crop = crop[:, :, :3]
                   
-                  label, conf = skin_disease_model(crop)
+                  # UPDATED: Returns debug_info
+                  label, conf, debug_info = skin_disease_model(crop, debug=debug)
+                  
+                  if "masks" not in debug_info: debug_info["masks"] = {}
+                  debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+                  
                   result.update({
                       "label": label, 
                       "confidence": float(conf), 
-                      "bbox": [x0/w, y0/h, x1/w, y1/h] # Normalized
+                      "bbox": [x0/w, y0/h, x1/w, y1/h], # Normalized
+                      "debug_info": debug_info
                   })
              else:
                   result.update({"label": "No Skin", "confidence": 0.0})

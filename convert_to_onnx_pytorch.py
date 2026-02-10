@@ -9,7 +9,7 @@ from pathlib import Path
 # Import architectures from inference_pytorch (or redefine them if imports are tricky)
 # To avoid import issues with relative paths if running as script, we'll just redefine/import carefully.
 try:
-    from inference_pytorch import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel
+    from inference_pytorch import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
 except ImportError:
     # Fallback: redefine if inference_pytorch isn't in path
     print("WARNING: Could not import architectures from inference_pytorch. Using local definitions.")
@@ -31,8 +31,10 @@ def export_body_model():
     model.load_state_dict(torch.load(path, map_location=DEVICE))
     model.eval()
 
-    # Dummy Input: (1, 3, 380, 380) EfficientNetB4
-    dummy_input = torch.randn(1, 3, 380, 380).to(DEVICE)
+    # Dummy Input: (1, 3, H, W) EfficientNetB4
+    # Uses imported IMG_SIZE (H, W) -> (380, 380)
+    h, w = IMG_SIZE
+    dummy_input = torch.randn(1, 3, h, w).to(DEVICE)
     
     output_path = SAVE_DIR / "jaundice_body.onnx"
     torch.onnx.export(
@@ -60,10 +62,10 @@ def export_eye_model():
     model.eval()
 
     # Dummy Input: Two inputs (Skin, Sclera)
-    # Skin: (1, 3, 380, 380)
-    # Sclera: (1, 3, 64, 64)
-    dummy_skin = torch.randn(1, 3, 380, 380).to(DEVICE)
-    dummy_sclera = torch.randn(1, 3, 64, 64).to(DEVICE)
+    h, w = IMG_SIZE
+    sh, sw = SCLERA_SIZE
+    dummy_skin = torch.randn(1, 3, h, w).to(DEVICE)
+    dummy_sclera = torch.randn(1, 3, sh, sw).to(DEVICE)
     
     output_path = SAVE_DIR / "jaundice_eye.onnx"
     torch.onnx.export(

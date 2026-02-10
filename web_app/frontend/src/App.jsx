@@ -169,44 +169,13 @@ function App() {
         {/* CAMERA FEED (Full Screen on Mobile) */}
         <div className="flex-1 relative flex flex-col justify-center bg-black lg:rounded-3xl lg:border-2 lg:border-gray-800 overflow-hidden w-full h-full">
           <div className="absolute inset-0">
-            <WebcamCapture mode={activeMode} uploadedImage={uploadedImage} isNerdMode={isNerdMode} />
-          </div>
-
-          {/* MOBILE TOP BAR (Overlay) */}
-          <div className="lg:hidden absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent z-10 flex justify-between items-start pointer-events-none">
-            <div className="flex flex-col">
-              <span className="text-xs font-bold text-cyan-400 tracking-wider">MEDICAL AI</span>
-              <span className="text-lg font-bold text-white">{modes.find(m => m.id === activeMode)?.label}</span>
-            </div>
-
-            <div className="flex gap-2 pointer-events-auto">
-              {/* Mobile Help Button */}
-              <button
-                onClick={() => setShowHelp(true)}
-                className="p-2 rounded-full backdrop-blur-md shadow-lg bg-blue-500/80 text-white transition-all"
-              >
-                <HelpCircle className="w-5 h-5" />
-              </button>
-
-              {/* Mobile Nerd Mode Toggle */}
-              <button
-                onClick={() => setIsNerdMode(!isNerdMode)}
-                className={`p-2 rounded-full backdrop-blur-md shadow-lg transition-all ${isNerdMode ? 'bg-purple-500/80 text-white' : 'bg-gray-800/80 text-gray-400'
-                  }`}
-              >
-                <Bug className="w-5 h-5" />
-              </button>
-
-              {/* Clear Image Button Mobile */}
-              {uploadedImage && (
-                <button
-                  onClick={() => setUploadedImage(null)}
-                  className="bg-red-500/80 backdrop-blur-md p-2 rounded-full text-white shadow-lg"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
-            </div>
+            <WebcamCapture
+              mode={activeMode}
+              uploadedImage={uploadedImage}
+              isNerdMode={isNerdMode}
+              setIsNerdMode={setIsNerdMode}
+              setShowHelp={setShowHelp}
+            />
           </div>
         </div>
 
@@ -232,11 +201,25 @@ function App() {
             ))}
           </div>
 
-          {/* Upload FAB (Mini) */}
-          <label className="flex items-center justify-center w-12 h-12 rounded-full bg-gray-800 text-cyan-400 border border-gray-700 shadow-lg cursor-pointer active:scale-95 transition-transform">
-            <Upload className="w-6 h-6" />
-            <input type="file" accept="image/*" className="hidden" onChange={handleUpload} />
-          </label>
+          {/* Right Group: App Tools (Mobile) */}
+          <div className="flex gap-3 items-center">
+            {/* Mobile Nerd Mode Toggle */}
+            <button
+              onClick={() => setIsNerdMode(!isNerdMode)}
+              className={`p-2.5 rounded-full transition-all active:scale-90 border shadow-md ${isNerdMode
+                  ? 'bg-purple-600/80 text-white border-purple-400'
+                  : 'bg-gray-800 text-gray-500 border-gray-700'
+                }`}
+            >
+              <Bug className="w-6 h-6" />
+            </button>
+
+            {/* Upload FAB (Mini) */}
+            <label className="flex items-center justify-center w-12 h-12 rounded-full bg-gray-800 text-cyan-400 border border-gray-700 shadow-lg cursor-pointer active:scale-95 transition-transform">
+              <Upload className="w-6 h-6" />
+              <input type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+            </label>
+          </div>
         </div>
       </div>
 

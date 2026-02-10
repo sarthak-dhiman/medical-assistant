@@ -1,20 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
-
-datas = []
-datas += collect_data_files('onnxruntime')
 
 
 a = Analysis(
-    ['webcam_app_onnx.py'],
-    pathex=[],
+    ['desktop\\main.py'],
+    pathex=['desktop'],
     binaries=[],
-    datas=datas,
-    hiddenimports=['onnxruntime', 'PIL._tkinter_finder', 'numpy', 'cv2'],
+    datas=[('web_app/frontend/dist', 'dist'), ('saved_models/onnx', 'models'), ('saved_models/skin_disease_mapping.json', 'models')],
+    hiddenimports=['inference', 'onnxruntime', 'cv2', 'numpy'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tensorflow', 'torch', 'tensorboard', 'keras', 'matplotlib', 'ipython', 'notebook'],
     noarchive=False,
     optimize=0,
 )
@@ -23,26 +19,20 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='MedicalAssistant',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='MedicalAssistant',
 )

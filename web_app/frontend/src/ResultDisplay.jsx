@@ -1,4 +1,7 @@
+import { useState } from 'react'
+
 const ResultDisplay = ({ result, mode, isNerdMode }) => {
+    const [viewMode, setViewMode] = useState('MASKS'); // 'MASKS' or 'HEATMAP'
     if (!result) return null;
 
     if (result.status === 'error') {
@@ -42,9 +45,36 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
 
     return (
         <>
-            {/* Show Bounding Boxes ONLY in Nerd Mode */}
+            {/* Show Bounding Boxes Only when NOT showing Masks/Heatmap (to avoid clutter) OR if user prefers both */}
             {isNerdMode && (
                 <>
+                    {/* --- VISUALIZATION LAYERS --- */}
+
+                    {/* LAYER 1: SEGMENTATION MASKS */}
+                    {viewMode === 'MASKS' && (
+                        <>
+                            {/* Overall Skin Mask */}
+                            {result.debug_info?.masks?.skin_mask && (
+                                <div className="absolute inset-0 z-10 opacity-30 pointer-events-none">
+                                    <img src={result.debug_info.masks.skin_mask} className="w-full h-full object-cover" alt="Skin Mask" />
+                                </div>
+                            )}
+                            {/* Person Mask (for Jaundice Body) */}
+                            {result.debug_info?.masks?.person_mask && (
+                                <div className="absolute inset-0 z-0 opacity-20 pointer-events-none mix-blend-overlay">
+                                    <img src={result.debug_info.masks.person_mask} className="w-full h-full object-cover" alt="Person Mask" />
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {/* LAYER 2: GRAD-CAM HEATMAP */}
+                    {viewMode === 'HEATMAP' && result.debug_info?.grad_cam && (
+                        <div className="absolute inset-0 z-10 opacity-60 pointer-events-none mix-blend-screen">
+                            <img src={result.debug_info.grad_cam} className="w-full h-full object-cover" alt="AI Attention Map" />
+                        </div>
+                    )}
+
                     {/* Single BBox (Body/Skin) */}
                     {bbox && (
                         <Box
@@ -68,11 +98,71 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                 </>
             )}
 
+            {/* NERD MODE: Stats Overlay */}
+            {isNerdMode && result.debug_info && (
+                <div className="absolute top-20 left-4 w-64 bg-black/80 border border-purple-500/30 rounded-xl p-3 backdrop-blur-md z-50 text-[10px] font-mono text-gray-300 shadow-xl pointer-events-auto">
+                    <div className="flex justify-between items-center mb-2 border-b border-purple-500/20 pb-1">
+                        <h4 className="text-purple-400 font-bold uppercase tracking-wider">Nerd Stats</h4>
+                        {/* View Toggle */}
+                        <div className="flex bg-gray-900 rounded p-0.5 gap-1">
+                            <button
+                                onClick={() => setViewMode('MASKS')}
+                                className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors ${viewMode === 'MASKS' ? 'bg-purple-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                            >
+                                MASKS
+                            </button>
+                            <button
+                                onClick={() => setViewMode('HEATMAP')}
+                                className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors ${viewMode === 'HEATMAP' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                            >
+                                HEAT
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Color Stats */}
+                    {result.debug_info.color_stats && (
+                        <div className="mb-3">
+                            <h5 className="text-gray-400 font-bold mb-1">Mean Color (Sclera/Skin)</h5>
+                            <div className="flex gap-2 items-center bg-gray-900 p-2 rounded border border-gray-700">
+                                <div
+                                    className="w-8 h-8 rounded border border-white/20 shadow-inner"
+                                    style={{
+                                        backgroundColor: `rgb(${result.debug_info.color_stats.mean_rgb.join(',')})`
+                                    }}
+                                />
+                                <div className="space-y-0.5">
+                                    <div>RGB: {result.debug_info.color_stats.mean_rgb.join(', ')}</div>
+                                    <div>HSV: {result.debug_info.color_stats.mean_hsv.join(', ')}</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Top-3 Props (Skin Disease) */}
+                    {result.debug_info.top_3 && (
+                        <div>
+                            <h5 className="text-gray-400 font-bold mb-1">Top 3 Classes</h5>
+                            <div className="space-y-1">
+                                {result.debug_info.top_3.map((item, i) => (
+                                    <div key={i} className="flex justify-between items-center text-gray-300">
+                                        <span>{item.label}</span>
+                                        <span className={i === 0 ? "text-green-400 font-bold" : "text-gray-500"}>
+                                            {(item.confidence * 100).toFixed(1)}%
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* DEBUG: Show Processed Eye Input (Only in Nerd Mode) */}
             {isNerdMode && result.debug_image && (
-                <div className="absolute bottom-20 right-4 w-24 h-24 bg-black/50 border border-white/20 rounded-lg overflow-hidden backdrop-blur-sm">
+                <div className="absolute bottom-20 right-4 w-24 h-24 bg-black/50 border border-white/20 rounded-lg overflow-hidden backdrop-blur-sm shadow-lg z-50">
                     <img src={result.debug_image} alt="Debug AI View" className="w-full h-full object-contain" />
-                    <span className="absolute bottom-0 left-0 w-full text-[10px] text-center bg-black/70 text-gray-300">AI View</span>
+                    <span className="absolute bottom-0 left-0 w-full text-[9px] font-bold text-center bg-black/80 text-white py-0.5">AI Input View</span>
                 </div>
             )}
 

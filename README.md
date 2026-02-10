@@ -115,6 +115,36 @@ The model is trained to identify the following 38 conditions:
 
 ---
 
+## Desktop App (Windows)
+
+You can run the application as a standalone Windows executable (`.exe`) without needing Docker or Python installed on the target machine.
+
+### Prerequisites (for building)
+-   Python 3.10+
+-   Node.js (for building frontend) or Docker (to build frontend via container)
+
+### How to Build & Run locally
+
+1.  **Install Python Dependencies**:
+    ```bash
+    pip install pywebview onnxruntime opencv-python-headless pyinstaller numpy
+    ```
+
+2.  **Build the Executable**:
+    Run the included batch script:
+    ```bash
+    build_desktop.bat
+    ```
+    *This script automatically:*
+    -   Builds the React Frontend.
+    -   Exports PyTorch models to ONNX.
+    -   Packages everything into `dist/MedicalAssistant.exe`.
+
+3.  **Run the App**:
+    Navigate to the `dist` folder and double-click `MedicalAssistant.exe`.
+
+---
+
 ## Development Notes
 
 ### Hot-Reloading
