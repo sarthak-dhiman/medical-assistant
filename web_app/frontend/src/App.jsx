@@ -60,7 +60,6 @@ function App() {
     { id: 'BURNS', label: 'Burns Detection', shortLabel: 'Burns', icon: <Stethoscope className="w-5 h-5" /> },
     { id: 'HAIRLOSS', label: 'Hairloss Analysis', shortLabel: 'Hair', icon: <User className="w-5 h-5" /> },
     { id: 'NAIL_DISEASE', label: 'Nail Disease', shortLabel: 'Nail', icon: <Stethoscope className="w-5 h-5" /> },
-    { id: 'PRESSURE_ULCER', label: 'Pressure Ulcer', shortLabel: 'Ulcer', icon: <Stethoscope className="w-5 h-5" /> },
   ]
 
   const handleUpload = (e) => {

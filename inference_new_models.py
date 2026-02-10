@@ -1,6 +1,6 @@
 """
 Inference functions for new disease detection models
-Burns, Hairloss, Nail Disease, Pressure Ulcer
+Burns, Hairloss, Nail Disease
 """
 
 import cv2
@@ -14,7 +14,7 @@ import threading
 import sys
 
 # Configuration
-IMG_SIZE_LARGE = (380, 380)  # Burns, Nail, Pressure Ulcer
+IMG_SIZE_LARGE = (380, 380)  # Burns, Nail
 IMG_SIZE_SMALL = (224, 224)  # Hairloss
 
 if getattr(sys, 'frozen', False):
@@ -28,16 +28,13 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 _burns_model = None
 _hairloss_model = None
 _nail_model = None
-_pressure_ulcer_model = None
 _nail_classes = None
-_pressure_ulcer_classes = None
 
 # Thread-safe locks
 _model_locks = {
     'burns': threading.Lock(),
     'hairloss': threading.Lock(),
-    'nail': threading.Lock(),
-    'pressure_ulcer': threading.Lock()
+    'nail': threading.Lock()
 }
 
 
@@ -97,22 +94,7 @@ class NailDiseaseModel(nn.Module):
         return self.classifier(features)
 
 
-class PressureUlcerModel(nn.Module):
-    """4-class ordinal classification: Stage 1-4"""
-    def __init__(self, num_classes=4):
-        super().__init__()
-        self.backbone = timm.create_model('efficientnet_b4', pretrained=False, num_classes=0)
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(self.backbone.num_features, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
-    
-    def forward(self, x):
-        features = self.backbone(x)
-        return self.classifier(features)
+
 
 
 # --- Model Loading Functions (Thread-Safe) ---
@@ -209,41 +191,7 @@ def get_nail_model():
             return None
 
 
-def get_pressure_ulcer_model():
-    global _pressure_ulcer_model, _pressure_ulcer_classes
-    if _pressure_ulcer_model:
-        return _pressure_ulcer_model
-    
-    with _model_locks['pressure_ulcer']:
-        if _pressure_ulcer_model:
-            return _pressure_ulcer_model
-        
-        model_path = BASE_DIR / "saved_models" / "pressure_ulcer_pytorch.pth"
-        map_path = BASE_DIR / "saved_models" / "pressure_ulcer_mapping.json"
-        
-        if not model_path.exists() or not map_path.exists():
-            print(f"⚠️ Pressure ulcer model files missing", flush=True)
-            return None
-        
-        try:
-            print("🔄 Loading Pressure Ulcer Model (Thread-Safe)...", flush=True)
-            
-            with open(map_path, 'r') as f:
-                raw_map = json.load(f)
-            
-            _pressure_ulcer_classes = {int(k): v for k, v in raw_map.items()}
-            num_classes = len(_pressure_ulcer_classes)
-            
-            model = PressureUlcerModel(num_classes=num_classes).to(DEVICE)
-            state_dict = torch.load(model_path, map_location=DEVICE)
-            model.load_state_dict(state_dict)
-            model.eval()
-            _pressure_ulcer_model = model
-            print(f"✅ Pressure Ulcer Model Loaded - {num_classes} stages", flush=True)
-            return _pressure_ulcer_model
-        except Exception as e:
-            print(f"❌ Failed to load Pressure Ulcer Model: {e}", flush=True)
-            return None
+
 
 
 # --- Preprocessing Functions ---
@@ -376,38 +324,4 @@ def predict_nail_disease(img_bgr, debug=False):
         return "Error", 0.0, {"error": str(e)}
 
 
-def predict_pressure_ulcer(img_bgr, debug=False):
-    """
-    Predict pressure ulcer stage
-    Returns: (label, confidence, debug_info)
-    """
-    model = get_pressure_ulcer_model()
-    if model is None or _pressure_ulcer_classes is None:
-        return "Model Not Loaded", 0.0, {"error": "Pressure ulcer model not available"}
-    
-    debug_info = {}
-    
-    try:
-        img_tensor = preprocess_image(img_bgr, IMG_SIZE_LARGE)
-        
-        with torch.no_grad():
-            output = model(img_tensor)
-            probs = torch.softmax(output, dim=1)
-            conf, idx = torch.max(probs, dim=1)
-            conf = conf.item()
-            idx = idx.item()
-        
-        label = _pressure_ulcer_classes.get(idx, f"Stage {idx+1}")
-        
-        # All stage probabilities
-        stage_probs = {}
-        for i in range(len(_pressure_ulcer_classes)):
-            stage_name = _pressure_ulcer_classes.get(i, f"Stage {i+1}")
-            stage_probs[stage_name] = float(probs[0][i].item())
-        
-        debug_info["stage_probabilities"] = stage_probs
-        
-        return label, conf, debug_info
-        
-    except Exception as e:
-        return "Error", 0.0, {"error": str(e)}
+

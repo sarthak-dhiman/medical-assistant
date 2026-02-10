@@ -382,13 +382,6 @@ def predict_task(self, image_data_b64, mode, debug=False):
             "debug_info": debug_info
         })
     
-    elif mode == "PRESSURE_ULCER":
-        # Pressure ulcer staging
-        label, conf, debug_info = inference_service.predict_pressure_ulcer(frame, debug=debug)
-        result.update({
-            "label": label,
-            "confidence": float(conf),
-            "debug_info": debug_info
-        })
+
 
     return result

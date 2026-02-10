@@ -19,8 +19,7 @@ from inference_pytorch import (
 from inference_new_models import (
     predict_burns,
     predict_hairloss,
-    predict_nail_disease,
-    predict_pressure_ulcer
+    predict_nail_disease
 )
 
 logger = logging.getLogger(__name__)
@@ -114,14 +113,7 @@ class InferenceService:
             logger.error(f"Nail Disease inference failed: {e}")
             return "Error", 0.0, {"error": str(e)}
     
-    @staticmethod
-    def predict_pressure_ulcer(img_bgr, debug=False):
-        """Predict pressure ulcer stage"""
-        try:
-            return predict_pressure_ulcer(img_bgr, debug)
-        except Exception as e:
-            logger.error(f"Pressure Ulcer inference failed: {e}")
-            return "Error", 0.0, {"error": str(e)}
+
 
 
 # Singleton instance
