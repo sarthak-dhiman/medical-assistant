@@ -300,22 +300,9 @@ def predict_task(self, image_data_b64, mode, debug=False):
         # Initialize result
         result = {"status": "success", "mode": mode}
         
-        # Model availability checks
-        if mode == "JAUNDICE_EYE":
-            if jaundice_eye_model is None:
-                return {"status": "error", "error": "Jaundice Eye Model Not Ready"}
-            if not seg_model or not seg_model.is_ready:
-                return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
-        
-        if mode == "JAUNDICE_BODY":
-            if jaundice_skin_model is None:
-                return {"status": "error", "error": "Jaundice Body Model Not Ready"}
-            if not seg_model or not seg_model.is_ready:
-                return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
-        
-        if mode == "SKIN_DISEASE":
-            if skin_disease_model is None:
-                return {"status": "error", "error": "Skin Disease Model Not Ready"}
+        # Model availability checks - only SegFormer is managed here
+        # Other models are loaded by inference_service on demand
+        if mode in ["JAUNDICE_EYE", "JAUNDICE_BODY", "SKIN_DISEASE"]:
             if not seg_model or not seg_model.is_ready:
                 return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
