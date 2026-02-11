@@ -18,9 +18,15 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = Path(__file__).parent
 
-# AUTO DETECT GPU:
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"DEBUG: PyTorch will use device: {DEVICE}", flush=True)
+# Lazy Device Loading
+_DEVICE = None
+
+def get_device():
+    global _DEVICE
+    if _DEVICE is None:
+        _DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"DEBUG: PyTorch using device: {_DEVICE}", flush=True)
+    return _DEVICE
 
 # --- Model Architectures (Must Match Training) ---
 
@@ -130,8 +136,8 @@ def get_eye_model():
             
         try:
             print("🔄 Loading Eye Model (Thread-Safe)...", flush=True)
-            model = JaundiceModel().to(DEVICE)
-            state_dict = torch.load(path, map_location=DEVICE)
+            model = JaundiceModel().to(get_device())
+            state_dict = torch.load(path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _eye_model = model
@@ -159,8 +165,8 @@ def get_body_model():
             
         try:
             print("🔄 Loading Body Model (Thread-Safe)...", flush=True)
-            model = JaundiceBodyModel().to(DEVICE)
-            state_dict = torch.load(path, map_location=DEVICE)
+            model = JaundiceBodyModel().to(get_device())
+            state_dict = torch.load(path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _body_model = model
@@ -210,8 +216,8 @@ def get_skin_model():
                 
             num_classes = len(_skin_classes)
             
-            model = SkinDiseaseModel(num_classes=num_classes).to(DEVICE)
-            state_dict = torch.load(model_path, map_location=DEVICE)
+            model = SkinDiseaseModel(num_classes=num_classes).to(get_device())
+            state_dict = torch.load(model_path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _skin_model = model
@@ -246,7 +252,7 @@ def _preprocess_img(img_bgr, size=(380,380)):
     # Batch dim
     img_batch = np.expand_dims(img_chw, axis=0)
     
-    return torch.tensor(img_batch, dtype=torch.float32).to(DEVICE)
+    return torch.tensor(img_batch, dtype=torch.float32).to(get_device())
 
 # --- GRAD-CAM UTILS ---
 class GradCAM:
@@ -337,7 +343,7 @@ def predict_jaundice_eye(skin_img, sclera_crop=None, debug=False):
     skin_norm = (skin_float - mean) / std
     
     skin_chw = np.transpose(skin_norm, (2, 0, 1))
-    skin_t = torch.tensor(np.expand_dims(skin_chw, axis=0), dtype=torch.float32).to(DEVICE)
+    skin_t = torch.tensor(np.expand_dims(skin_chw, axis=0), dtype=torch.float32).to(get_device())
     
     # Preprocess Sclera (64x64) - MATCH NEW TRAINING: ImageNet normalization
     if sclera_crop is None or sclera_crop.size == 0:
@@ -349,7 +355,7 @@ def predict_jaundice_eye(skin_img, sclera_crop=None, debug=False):
     sclera_float = sclera_rgb.astype(np.float32) / 255.0
     sclera_norm = (sclera_float - mean) / std
     sclera_chw = np.transpose(sclera_norm, (2, 0, 1))
-    sclera_t = torch.tensor(np.expand_dims(sclera_chw, axis=0), dtype=torch.float32).to(DEVICE)
+    sclera_t = torch.tensor(np.expand_dims(sclera_chw, axis=0), dtype=torch.float32).to(get_device())
         
     debug_info = {}
     

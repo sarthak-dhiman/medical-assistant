@@ -1,6 +1,10 @@
 import { useState } from 'react'
 
 const ResultDisplay = ({ result, mode, isNerdMode }) => {
+    // Check what we receive
+    if (isNerdMode && result) {
+        console.log("🤓 Nerd Mode Data:", result.debug_info, "Mode:", mode);
+    }
     const [viewMode, setViewMode] = useState('MASKS'); // 'MASKS' or 'HEATMAP'
     if (!result) return null;
 
@@ -134,6 +138,27 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                                 <div className="space-y-0.5">
                                     <div>RGB: {result.debug_info.color_stats.mean_rgb.join(', ')}</div>
                                     <div>HSV: {result.debug_info.color_stats.mean_hsv.join(', ')}</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Raw Probability (Binary Models like Burns) */}
+                    {result.debug_info.raw_probability !== undefined && (
+                        <div className="mb-3">
+                            <h5 className="text-gray-400 font-bold mb-1">Raw Confidence</h5>
+                            <div className="text-gray-300 font-mono text-xs">
+                                <div className="flex justify-between mb-1">
+                                    <span>{result.debug_info.raw_probability.toFixed(4)}</span>
+                                    <span className={result.debug_info.raw_probability > 0.5 ? "text-red-400" : "text-green-400"}>
+                                        {result.debug_info.raw_probability > 0.5 ? "POSITIVE" : "NEGATIVE"}
+                                    </span>
+                                </div>
+                                <div className="w-full bg-gray-700 h-2 rounded overflow-hidden">
+                                    <div
+                                        className={`h-full ${result.debug_info.raw_probability > 0.5 ? 'bg-red-500' : 'bg-green-500'}`}
+                                        style={{ width: `${result.debug_info.raw_probability * 100}%` }}
+                                    />
                                 </div>
                             </div>
                         </div>

@@ -75,6 +75,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             }
 
             // 2. WEB API (Standard Flow)
+            console.log("🤓 Sending Request - Nerd Mode:", isNerdMode, "Mode:", mode);
             const response = await axios.post(`${API_URL}/predict`, {
                 image: imageSrc,
                 mode: mode,

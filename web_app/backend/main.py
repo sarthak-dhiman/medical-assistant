@@ -86,8 +86,8 @@ async def predict_endpoint(request: PredictRequest):
     """
     # Enqueue task
     try:
-        task = predict_task.delay(request.image, request.mode)
-        logger.info(f"Task enqueued: {task.id} (Mode: {request.mode})")
+        task = predict_task.delay(request.image, request.mode, request.debug)
+        logger.info(f"Task enqueued: {task.id} (Mode: {request.mode}, Debug: {request.debug})")
         return {"task_id": task.id, "status": "processing"}
     except Exception as e:
         logger.error(f"Failed to enqueue task: {e}")

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import WebcamCapture from './WebcamCapture'
-import { Upload, X, User, Eye, Stethoscope, Activity, Bug, HelpCircle } from 'lucide-react'
+import { Upload, X, User, Eye, Stethoscope, Activity, Bug, HelpCircle, ChevronUp, ChevronDown } from 'lucide-react'
 
 function App() {
   const [activeMode, setActiveMode] = useState('JAUNDICE_BODY')
@@ -8,6 +8,7 @@ function App() {
   const [isNerdMode, setIsNerdMode] = useState(false)
   const [showHelp, setShowHelp] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
+  const [showModeMenu, setShowModeMenu] = useState(false);
 
   // Lock Body Scroll (Prevent Pull-to-Refresh & Scroll)
   useEffect(() => {
@@ -58,7 +59,6 @@ function App() {
     { id: 'JAUNDICE_EYE', label: 'Jaundice Adult', shortLabel: 'Adult', icon: <Eye className="w-5 h-5" /> },
     { id: 'SKIN_DISEASE', label: 'Skin Disease', shortLabel: 'Skin', icon: <Stethoscope className="w-5 h-5" /> },
     { id: 'BURNS', label: 'Burns Detection', shortLabel: 'Burns', icon: <Stethoscope className="w-5 h-5" /> },
-    { id: 'HAIRLOSS', label: 'Hairloss Analysis', shortLabel: 'Hair', icon: <User className="w-5 h-5" /> },
     { id: 'NAIL_DISEASE', label: 'Nail Disease', shortLabel: 'Nail', icon: <Stethoscope className="w-5 h-5" /> },
   ]
 
@@ -146,27 +146,19 @@ function App() {
             </div>
           </div>
 
-          {/* Instructions */}
-          <div className="bg-blue-900/10 rounded-2xl p-6 border border-blue-500/10">
-            <h4 className="text-blue-400 font-semibold mb-2">Instructions</h4>
-            <p className="text-sm text-gray-400 leading-relaxed">
-              {uploadedImage ? (
-                "Analyzing static image."
-              ) : (
-                <>
-                  {activeMode === 'JAUNDICE_EYE' && "Come closer & remove glasses. Best for adults."}
-                  {activeMode === 'JAUNDICE_BODY' && "Ensure good lighting. Show face or skin clearly. Best for babies."}
-                  {activeMode === 'SKIN_DISEASE' && "Focus camera on affected area. Keep steady."}
-                </>
-              )}
-            </p>
-            {/* Troubleshooting Tip */}
-            <div className="mt-4 pt-4 border-t border-blue-500/20">
-              <p className="text-xs text-blue-300 opacity-80">
-                💡 <strong>Tip:</strong> If the model doesn't load or gets stuck, try switching modes and back to refresh it.
-              </p>
+          {/* Instructions Button (Replaces Tab) */}
+          <button
+            onClick={() => setShowHelp(true)}
+            className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-blue-900/10 text-blue-400 hover:bg-blue-900/20 active:scale-[0.98] transition-all border border-blue-500/10 group mt-auto"
+          >
+            <span className="font-semibold flex items-center gap-2">
+              <HelpCircle className="w-5 h-5 group-hover:text-blue-300 transition-colors" />
+              <span className="group-hover:text-gray-200 transition-colors">Instructions & Help</span>
+            </span>
+            <div className="bg-blue-500/10 p-1 rounded-full group-hover:bg-blue-500/20">
+              <ChevronUp className="w-4 h-4 rotate-90 opacity-50 group-hover:opacity-100 transition-opacity" />
             </div>
-          </div>
+          </button>
         </aside>
 
         {/* CAMERA FEED (Full Screen on Mobile) */}
@@ -184,45 +176,75 @@ function App() {
 
       </main>
 
-      {/* MOBILE BOTTOM NAVIGATION */}
-      <div className="lg:hidden bg-gray-900 border-t border-gray-800 pb-safe pt-2 px-4 z-50">
-        <div className="flex justify-between items-center h-16">
+      {/* MOBILE BOTTOM NAVIGATION (DROP UP) */}
+      <div className="lg:hidden fixed bottom-6 left-4 right-4 z-[50] flex flex-col justify-end pointer-events-none gap-3 pb-[env(safe-area-inset-bottom)]">
 
-          {/* Mode Tabs */}
-          <div className="flex bg-gray-800 rounded-full p-1 gap-1">
-            {modes.map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setActiveMode(mode.id)}
-                className={`flex flex-col items-center justify-center px-4 py-2 rounded-full transition-all ${activeMode === mode.id
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-gray-400'
-                  }`}
-              >
-                {activeMode === mode.id ? <span className="text-xs font-bold">{mode.shortLabel}</span> : mode.icon}
-              </button>
-            ))}
+        {/* Drop Up Menu */}
+        {showModeMenu && (
+          <div className="w-full bg-gray-900/95 backdrop-blur-xl border border-gray-700/50 rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-5 fade-in duration-200 pointer-events-auto origin-bottom mb-2">
+            <div className="max-h-[50vh] overflow-y-auto p-2 space-y-1">
+              {modes.map((mode) => (
+                <button
+                  key={mode.id}
+                  onClick={() => { setActiveMode(mode.id); setShowModeMenu(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all active:scale-[0.98] ${activeMode === mode.id
+                    ? 'bg-blue-600/20 border border-blue-500/30 text-white shadow-lg shadow-blue-900/10'
+                    : 'bg-transparent text-gray-400 hover:bg-gray-800 hover:text-white'
+                    }`}
+                >
+                  <div className={`p-2 rounded-lg ${activeMode === mode.id ? 'bg-blue-500 text-white' : 'bg-gray-800 text-gray-400'}`}>
+                    {mode.icon}
+                  </div>
+                  <div className="flex flex-col items-start">
+                    <span className="font-semibold text-sm tracking-wide">{mode.label}</span>
+                  </div>
+                  {activeMode === mode.id && <div className="ml-auto w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6]"></div>}
+                </button>
+              ))}
+            </div>
           </div>
+        )}
 
-          {/* Right Group: App Tools (Mobile) */}
-          <div className="flex gap-3 items-center">
-            {/* Mobile Nerd Mode Toggle */}
-            <button
-              onClick={() => setIsNerdMode(!isNerdMode)}
-              className={`p-2.5 rounded-full transition-all active:scale-90 border shadow-md ${isNerdMode
-                ? 'bg-purple-600/80 text-white border-purple-400'
-                : 'bg-gray-800 text-gray-500 border-gray-700'
-                }`}
-            >
-              <Bug className="w-6 h-6" />
-            </button>
+        {/* Bottom Bar (Floating Capsule) */}
+        <div className="w-full pointer-events-auto flex gap-3 h-16">
 
-            {/* Upload FAB (Mini) */}
-            <label className="flex items-center justify-center w-12 h-12 rounded-full bg-gray-800 text-cyan-400 border border-gray-700 shadow-lg cursor-pointer active:scale-95 transition-transform">
-              <Upload className="w-6 h-6" />
-              <input type="file" accept="image/*" className="hidden" onChange={handleUpload} />
-            </label>
-          </div>
+          {/* Main Mode Trigger */}
+          <button
+            onClick={() => setShowModeMenu(!showModeMenu)}
+            className={`flex-1 bg-gray-900/90 backdrop-blur-xl border border-gray-700/50 rounded-2xl shadow-xl flex items-center justify-between px-4 transition-all active:scale-[0.98] group ${showModeMenu ? 'ring-2 ring-blue-500/50 border-blue-500/50' : ''}`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-gradient-to-br from-blue-600/20 to-cyan-500/20 text-blue-400 border border-blue-500/20">
+                {modes.find(m => m.id === activeMode)?.icon}
+              </div>
+              <div className="flex flex-col items-start">
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Current Mode</span>
+                <span className="text-sm font-bold text-white truncate max-w-[120px]">
+                  {modes.find(m => m.id === activeMode)?.shortLabel}
+                </span>
+              </div>
+            </div>
+            <div className={`p-2 rounded-full transition-all duration-300 ${showModeMenu ? 'bg-blue-600 text-white rotate-180' : 'bg-gray-800 text-gray-400'}`}>
+              <ChevronUp className="w-5 h-5" />
+            </div>
+          </button>
+
+          {/* Tools */}
+          <button
+            onClick={() => setIsNerdMode(!isNerdMode)}
+            className={`h-16 w-16 rounded-2xl flex items-center justify-center transition-all border shadow-xl active:scale-95 ${isNerdMode
+              ? 'bg-purple-600 text-white border-purple-500 shadow-purple-900/30'
+              : 'bg-gray-900/90 text-gray-400 border-gray-700/50 backdrop-blur-xl'
+              }`}
+          >
+            <Bug className="w-6 h-6" />
+          </button>
+
+          <label className="h-16 w-16 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white border border-blue-400/30 shadow-xl shadow-blue-900/30 cursor-pointer active:scale-95 transition-transform">
+            <Upload className="w-6 h-6" />
+            <input type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+          </label>
+
         </div>
       </div>
 
@@ -247,6 +269,8 @@ function App() {
                 {activeMode === 'JAUNDICE_EYE' && "Come closer & remove glasses. Best for adults."}
                 {activeMode === 'JAUNDICE_BODY' && "Ensure good lighting. Show face or skin clearly. Best for babies."}
                 {activeMode === 'SKIN_DISEASE' && "Focus camera on affected area. Keep steady."}
+                {activeMode === 'BURNS' && "Ensure good lighting. Focus on the burn area."}
+                {activeMode === 'NAIL_DISEASE' && "Focus specifically on the affected nail. Remove polish if possible."}
               </p>
             </div>
 

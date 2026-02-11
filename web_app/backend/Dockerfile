@@ -25,6 +25,7 @@ ENV CACHEBUST=2
 # NOTE: inference.py and inference_skin.py were redundant and deleted
 COPY segformer_utils.py .
 COPY inference_pytorch.py .
+COPY inference_new_models.py .
 # COPY saved_models/ ./saved_models/ # We will mount this via Volume for speed
 
 # Copy Backend Code

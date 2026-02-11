@@ -1,6 +1,6 @@
 # AI-Powered Jaundice & Skin Disease Assistant
 
-A containerized, mobile-first web application for the early detection of **Neonatal Jaundice** and **dermatological conditions** using advanced computer vision and deep learning.
+A containerized, mobile-first web application for the early detection of **Neonatal Jaundice**, **dermatological conditions**, **Burns**, **Hairloss**, and **Nail Diseases** using advanced computer vision and deep learning. (Total: **6 Detection Modes**)
 
 ![Project Status](https://img.shields.io/badge/Status-Active-success)
 ![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
@@ -87,6 +87,36 @@ The model is trained to identify the following 38 conditions:
 36. Vasculitis
 37. Vitiligo
 38. Warts
+
+---
+
+### 4. Burns Detection Model
+Target: **Acute Burn Injuries**
+-   **Methodology:** Binary classification using **EfficientNet-B4**.
+-   **Process:**
+    1.  Segments skin area using HSV color thresholding.
+    2.  Extracts Region of Interest (ROI) containing the potential burn.
+    3.  Classifies the ROI as **Burn** or **Healthy Skin**.
+-   **Capability:** Distinguishes between healthy skin and burn injuries with high accuracy.
+
+### 5. Hairloss Analysis Model
+Target: **Alopecia & Hair Health**
+-   **Methodology:** Full-frame analysis using **EfficientNet-B3**.
+-   **Training:** Optimized with **Focal Loss** to handle class imbalance between bald and non-bald datasets.
+-   **Capability:** Detects signs of significant hair loss and baldness patterns.
+
+### 6. Nail Disease Model
+Target: **Onychology**
+-   **Methodology:** Multi-class classification using **EfficientNet-B4**.
+-   **Classes:** Detects 8 specific conditions:
+    1.  Acral Lentiginous Melanoma
+    2.  Blue Finger
+    3.  Clubbing
+    4.  Healthy Nail
+    5.  Nail Psoriasis
+    6.  Onychogryphosis
+    7.  Onychomycosis
+    8.  Pitting
 
 ---
 

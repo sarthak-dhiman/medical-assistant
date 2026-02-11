@@ -65,6 +65,15 @@ def load_models():
             logger.error(err_msg)
             temp_errors.append(err_msg)
             
+            # DEBUG: Write error to file
+            try:
+                with open("/app/saved_models/init_error.txt", "w") as f:
+                    f.write(f"SegFormer Import Error: {e}\n")
+                    import traceback
+                    f.write(traceback.format_exc())
+            except Exception as file_err:
+                logger.error(f"Failed to write debug log: {file_err}")
+            
     # Models are now loaded lazily via inference_service (thread-safe)
     # We only need to warm up SegFormer here
     
@@ -91,7 +100,21 @@ def init_models(**kwargs):
     if errors:
         logger.error(f"❌ WORKER INIT FAILED: {errors}")
     else:
-        logger.info("✅ WORKER INIT SUCCESS: All models ready!")
+        logger.info("✅ SegFormer Ready. Warming up Classification Models...")
+        try:
+            # Import getters locally to avoid top-level side effects (just in case)
+            from inference_new_models import get_burns_model, get_nail_model
+            from inference_pytorch import get_eye_model, get_body_model, get_skin_model
+            
+            # Trigger loading
+            get_eye_model()
+            get_body_model()
+            get_skin_model()
+            get_burns_model()
+            get_nail_model()
+            logger.info("✅ WORKER INIT SUCCESS: All models warmed up!")
+        except Exception as e:
+            logger.error(f"⚠️ Model Warmup Partial Fail: {e}")
 
 @celery_app.task(bind=True)
 def check_model_health(self):
@@ -153,8 +176,8 @@ def predict_task(self, image_data_b64, mode, debug=False):
     
     h, w = frame.shape[:2]
     
-    # 1. Segmentation (Needed for Jaundice)
-    if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+    # 1. Segmentation (Needed for Jaundice, Skin, Burns)
+    if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS"]:
         # Optimization: Downscale for SegFormer
         INFERENCE_WIDTH = 480
         scale = INFERENCE_WIDTH / w
@@ -336,42 +359,51 @@ def predict_task(self, image_data_b64, mode, debug=False):
                       "debug_info": debug_info
                   })
              else:
-                  result.update({"label": "No Skin", "confidence": 0.0})
+                  debug_info = {}
+                  if "masks" not in debug_info: debug_info["masks"] = {}
+                  debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+                  result.update({
+                      "label": "No Skin", 
+                      "confidence": 0.0,
+                      "debug_info": debug_info
+                  })
+        
+        elif mode == "BURNS":
+            # Burns detection on skin
+            if cv2.countNonZero(skin_mask) > 100:
+                y, x = np.where(skin_mask > 0)
+                y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+                crop = frame[y0:y1, x0:x1]
+                
+                if len(crop.shape) == 2:
+                    crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+                elif crop.shape[2] != 3:
+                    crop = crop[:, :, :3]
+                
+                logger.info("🔥 CALLING BURNS INFERENCE SERVICE...")
+                label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
+                logger.info(f"🔥 BURNS INFERENCE RETURNED: {label}")
+                
+                if "masks" not in debug_info: debug_info["masks"] = {}
+                debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+                
+                result.update({
+                    "label": label,
+                    "confidence": float(conf),
+                    "bbox": [x0/w, y0/h, x1/w, y1/h],
+                    "debug_info": debug_info
+                })
+            else:
+                debug_info = {}
+                if "masks" not in debug_info: debug_info["masks"] = {}
+                debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+                result.update({
+                    "label": "No Skin",
+                    "confidence": 0.0,
+                    "debug_info": debug_info
+                })
     
-    elif mode == "BURNS":
-        # Burns detection on skin
-        if cv2.countNonZero(skin_mask) > 100:
-            y, x = np.where(skin_mask > 0)
-            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-            crop = frame[y0:y1, x0:x1]
-            
-            if len(crop.shape) == 2:
-                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-            elif crop.shape[2] != 3:
-                crop = crop[:, :, :3]
-            
-            label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
-            
-            if "masks" not in debug_info: debug_info["masks"] = {}
-            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-            
-            result.update({
-                "label": label,
-                "confidence": float(conf),
-                "bbox": [x0/w, y0/h, x1/w, y1/h],
-                "debug_info": debug_info
-            })
-        else:
-            result.update({"label": "No Skin", "confidence": 0.0})
-    
-    elif mode == "HAIRLOSS":
-        # Hairloss detection on scalp
-        label, conf, debug_info = inference_service.predict_hairloss(frame, debug=debug)
-        result.update({
-            "label": label,
-            "confidence": float(conf),
-            "debug_info": debug_info
-        })
+
     
     elif mode == "NAIL_DISEASE":
         # Nail disease detection
@@ -384,4 +416,6 @@ def predict_task(self, image_data_b64, mode, debug=False):
     
 
 
+    logger.info(f"Task Finished. Result Keys: {list(result.keys())}")
+    logger.info(f"Debug Mode: {debug}")
     return result

@@ -19,15 +19,22 @@ from albumentations.pytorch import ToTensorV2
 
 # Configuration
 IMG_SIZE = 380
-BATCH_SIZE = 32
+BATCH_SIZE = 4   # Reduced further to avoid OOM
+ACCUM_STEPS = 8  # Increased accumulation (effective batch size = 32)
 EPOCHS = 50
 LEARNING_RATE = 1e-4
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_WORKERS = 4
+NUM_WORKERS = 0  # Reduced workers to minimize overhead
 PATIENCE = 10
 
+# Initialize AMP Scaler
+scaler = torch.cuda.amp.GradScaler()
+
+# Optimize cuDNN
+torch.backends.cudnn.benchmark = True
+
 # Paths
-DATASET_ROOT = Path("Dataset/nail/nail_dataset")
+DATASET_ROOT = Path("Dataset/nail")
 OUTPUT_DIR = Path("saved_models")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -43,7 +50,7 @@ CLASS_NAMES = [
     "Pitting"
 ]
 
-print(f"💅 Nail Disease Detection Training")
+print(f"Nail Disease Detection Training")
 print(f"Device: {DEVICE}")
 print(f"Classes: {len(CLASS_NAMES)}")
 
@@ -51,6 +58,9 @@ print(f"Classes: {len(CLASS_NAMES)}")
 class NailDataset(Dataset):
     def __init__(self, root_dir, split='train', transform=None):
         self.root_dir = Path(root_dir) / split
+        if not self.root_dir.exists():
+            raise FileNotFoundError(f"Directory not found: {self.root_dir}")
+            
         self.transform = transform
         self.image_paths = []
         self.labels = []
@@ -59,10 +69,15 @@ class NailDataset(Dataset):
         for class_idx, class_name in enumerate(CLASS_NAMES):
             class_dir = self.root_dir / class_name
             if class_dir.exists():
-                images = list(class_dir.glob("*.jpg")) + list(class_dir.glob("*.png"))
+                images = list(class_dir.glob("*.jpg")) + list(class_dir.glob("*.png")) + list(class_dir.glob("*.jpeg"))
                 self.image_paths.extend(images)
                 self.labels.extend([class_idx] * len(images))
+            else:
+                print(f"  Warning: Class directory {class_name} not found in {split}")
         
+        if len(self.image_paths) == 0:
+            raise ValueError(f"No images found in {self.root_dir}. Please check your dataset structure.")
+            
         print(f"  {split.capitalize()}: {len(self.image_paths)} images")
         
     def __len__(self):
@@ -92,7 +107,7 @@ def get_transforms(is_train=True):
             A.RandomBrightnessContrast(p=0.5),
             A.HueSaturationValue(p=0.3),
             A.GaussNoise(p=0.2),
-            A.CoarseDropout(max_holes=6, max_height=24, max_width=24, p=0.3),
+            A.CoarseDropout(num_holes_range=(4, 6), hole_height_range=(12, 24), hole_width_range=(12, 24), p=0.3),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])
@@ -121,28 +136,37 @@ class NailDiseaseModel(nn.Module):
         return self.classifier(features)
 
 
-def train_epoch(model, loader, criterion, optimizer, device):
+def train_epoch(model, loader, criterion, optimizer, device, accum_steps=1):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
     
+    optimizer.zero_grad()
     pbar = tqdm(loader, desc="Training")
-    for images, labels in pbar:
+    for batch_idx, (images, labels) in enumerate(pbar):
         images, labels = images.to(device), labels.to(device)
         
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+        # Use AMP autocast
+        with torch.cuda.amp.autocast():
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss = loss / accum_steps  # Scale loss
+            
+        # Scale loss and backward
+        scaler.scale(loss).backward()
         
-        running_loss += loss.item()
+        if (batch_idx + 1) % accum_steps == 0:
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+        
+        running_loss += loss.item() * accum_steps
         _, preds = torch.max(outputs, 1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
         
-        pbar.set_postfix({'loss': f'{loss.item():.4f}', 'acc': f'{correct/total:.4f}'})
+        pbar.set_postfix({'loss': f'{loss.item() * accum_steps:.4f}', 'acc': f'{correct/total:.4f}'})
     
     return running_loss / len(loader), correct / total
 
@@ -157,8 +181,9 @@ def validate(model, loader, criterion, device):
         for images, labels in tqdm(loader, desc="Validation"):
             images, labels = images.to(device), labels.to(device)
             
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+            with torch.cuda.amp.autocast():
+                outputs = model(images)
+                loss = criterion(outputs, labels)
             
             running_loss += loss.item()
             _, preds = torch.max(outputs, 1)
@@ -169,7 +194,11 @@ def validate(model, loader, criterion, device):
 
 
 def main():
-    print("📊 Loading dataset...")
+    # Clear CUDA cache before starting
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        
+    print("Loading dataset...")
     train_dataset = NailDataset(DATASET_ROOT, split='train', transform=get_transforms(True))
     test_dataset = NailDataset(DATASET_ROOT, split='test', transform=get_transforms(False))
     
@@ -185,9 +214,9 @@ def main():
     patience_counter = 0
     
     for epoch in range(EPOCHS):
-        print(f"\n📍 Epoch {epoch+1}/{EPOCHS}")
+        print(f"\nEpoch {epoch+1}/{EPOCHS}")
         
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, DEVICE)
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, DEVICE, ACCUM_STEPS)
         val_loss, val_acc = validate(model, test_loader, criterion, DEVICE)
         scheduler.step()
         
@@ -197,16 +226,16 @@ def main():
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(model.state_dict(), OUTPUT_DIR / "nail_disease_pytorch.pth")
-            print(f"✅ Saved best model (Val Acc: {val_acc:.4f})")
+            print(f"Saved best model (Val Acc: {val_acc:.4f})")
             patience_counter = 0
         else:
             patience_counter += 1
         
         if patience_counter >= PATIENCE:
-            print(f"⏹️ Early stopping triggered")
+            print(f"Early stopping triggered")
             break
     
-    print("\n🧪 Final Testing...")
+    print("\nFinal Testing...")
     model.load_state_dict(torch.load(OUTPUT_DIR / "nail_disease_pytorch.pth"))
     test_loss, test_acc = validate(model, test_loader, criterion, DEVICE)
     print(f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
@@ -230,7 +259,7 @@ def main():
     with open(OUTPUT_DIR / "nail_disease_metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"\n🎉 Training Complete!")
+    print(f"\n Training Complete!")
     print(f"Best Val Accuracy: {best_val_acc:.4f}")
     print(f"Test Accuracy: {test_acc:.4f}")
 

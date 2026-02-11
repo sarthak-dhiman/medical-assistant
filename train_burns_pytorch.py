@@ -20,12 +20,16 @@ from albumentations.pytorch import ToTensorV2
 
 # Configuration
 IMG_SIZE = 380
-BATCH_SIZE = 32
+BATCH_SIZE = 8   # Further reduced to avoid cuDNN execution failure
+ACCUM_STEPS = 4  # Gradient accumulation (effective batch size = 32)
 EPOCHS = 50
 LEARNING_RATE = 1e-4
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-NUM_WORKERS = 4
+NUM_WORKERS = 0  # Reduced workers to minimize overhead
 PATIENCE = 10  # Early stopping
+
+# Optimize cuDNN
+torch.backends.cudnn.benchmark = True
 
 # Paths
 DATASET_ROOT = Path("Dataset/Burns_Skin")
@@ -72,7 +76,7 @@ def get_transforms(is_train=True):
             A.RandomBrightnessContrast(p=0.5),
             A.HueSaturationValue(p=0.3),
             A.GaussNoise(p=0.2),
-            A.CoarseDropout(max_holes=8, max_height=32, max_width=32, p=0.3),
+            A.CoarseDropout(num_holes_range=(4, 8), hole_height_range=(16, 32), hole_width_range=(16, 32), p=0.3),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])
@@ -86,8 +90,8 @@ def get_transforms(is_train=True):
 
 def load_dataset():
     """Load burns dataset with class balancing"""
-    burn_dir = DATASET_ROOT / "burn"
-    healthy_dir = DATASET_ROOT / "healthy"
+    burn_dir = DATASET_ROOT / "burns"
+    healthy_dir = DATASET_ROOT / "healthy" / "healthy"
     
     # Collect all images
     burn_images = list(burn_dir.glob("*.jpg")) + list(burn_dir.glob("*.png"))
@@ -132,28 +136,33 @@ class BurnsModel(nn.Module):
         return self.classifier(features)
 
 
-def train_epoch(model, loader, criterion, optimizer, device):
+def train_epoch(model, loader, criterion, optimizer, device, accum_steps=1):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
     
+    optimizer.zero_grad()
     pbar = tqdm(loader, desc="Training")
-    for images, labels in pbar:
+    for batch_idx, (images, labels) in enumerate(pbar):
         images, labels = images.to(device), labels.to(device).float().unsqueeze(1)
         
-        optimizer.zero_grad()
         outputs = model(images)
         loss = criterion(outputs, labels)
+        loss = loss / accum_steps  # Scale loss for gradient accumulation
         loss.backward()
-        optimizer.step()
         
-        running_loss += loss.item()
+        # Update weights every accum_steps batches
+        if (batch_idx + 1) % accum_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+        
+        running_loss += loss.item() * accum_steps
         preds = (torch.sigmoid(outputs) > 0.5).float()
         correct += (preds == labels).sum().item()
         total += labels.size(0)
         
-        pbar.set_postfix({'loss': f'{loss.item():.4f}', 'acc': f'{correct/total:.4f}'})
+        pbar.set_postfix({'loss': f'{loss.item() * accum_steps:.4f}', 'acc': f'{correct/total:.4f}'})
     
     return running_loss / len(loader), correct / total
 
@@ -212,7 +221,7 @@ def main():
     for epoch in range(EPOCHS):
         print(f"\n📍 Epoch {epoch+1}/{EPOCHS}")
         
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, DEVICE)
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, DEVICE, ACCUM_STEPS)
         val_loss, val_acc = validate(model, val_loader, criterion, DEVICE)
         scheduler.step()
         

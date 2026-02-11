@@ -104,6 +104,21 @@ class SegFormerWrapper:
             print(f"   Full traceback:")
             import traceback
             traceback.print_exc()
+            
+            # Write error to file for debugging
+            try:
+                if getattr(sys, 'frozen', False):
+                    base_dir = os.path.dirname(sys.executable)
+                else:
+                    base_dir = os.getcwd() # Should be /app
+                
+                err_path = os.path.join(base_dir, "saved_models", "segformer_error.txt")
+                with open(err_path, "w") as f:
+                    f.write(f"Error: {e}\n")
+                    f.write(traceback.format_exc())
+            except:
+                pass
+
             print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
             self.model = None
     

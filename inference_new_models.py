@@ -1,8 +1,10 @@
+
 """
 Inference functions for new disease detection models
 Burns, Hairloss, Nail Disease
 """
 
+import logging
 import cv2
 import numpy as np
 import torch
@@ -11,6 +13,7 @@ import timm
 from pathlib import Path
 import json
 import threading
+import base64
 import sys
 
 # Configuration
@@ -22,18 +25,23 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = Path(__file__).parent
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Lazy Device Loading
+_DEVICE = None
+
+def get_device():
+    global _DEVICE
+    if _DEVICE is None:
+        _DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    return _DEVICE
 
 # Global model variables
 _burns_model = None
-_hairloss_model = None
 _nail_model = None
 _nail_classes = None
 
 # Thread-safe locks
 _model_locks = {
     'burns': threading.Lock(),
-    'hairloss': threading.Lock(),
     'nail': threading.Lock()
 }
 
@@ -58,22 +66,7 @@ class BurnsModel(nn.Module):
         return self.classifier(features)
 
 
-class HairlossModel(nn.Module):
-    """Binary classification: Bald vs Not Bald"""
-    def __init__(self):
-        super().__init__()
-        self.backbone = timm.create_model('efficientnet_b3', pretrained=False, num_classes=0)
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.3),
-            nn.Linear(self.backbone.num_features, 128),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(128, 1)
-        )
-    
-    def forward(self, x):
-        features = self.backbone(x)
-        return self.classifier(features)
+
 
 
 class NailDiseaseModel(nn.Module):
@@ -114,8 +107,8 @@ def get_burns_model():
         
         try:
             print("🔄 Loading Burns Model (Thread-Safe)...", flush=True)
-            model = BurnsModel().to(DEVICE)
-            state_dict = torch.load(path, map_location=DEVICE)
+            model = BurnsModel().to(get_device())
+            state_dict = torch.load(path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _burns_model = model
@@ -126,31 +119,7 @@ def get_burns_model():
             return None
 
 
-def get_hairloss_model():
-    global _hairloss_model
-    if _hairloss_model:
-        return _hairloss_model
-    
-    with _model_locks['hairloss']:
-        if _hairloss_model:
-            return _hairloss_model
-        
-        path = BASE_DIR / "saved_models" / "hairloss_pytorch.pth"
-        if not path.exists():
-            return None
-        
-        try:
-            print("🔄 Loading Hairloss Model (Thread-Safe)...", flush=True)
-            model = HairlossModel().to(DEVICE)
-            state_dict = torch.load(path, map_location=DEVICE)
-            model.load_state_dict(state_dict)
-            model.eval()
-            _hairloss_model = model
-            print("✅ Hairloss Model Loaded", flush=True)
-            return _hairloss_model
-        except Exception as e:
-            print(f"❌ Failed to load Hairloss Model: {e}", flush=True)
-            return None
+
 
 
 def get_nail_model():
@@ -179,8 +148,8 @@ def get_nail_model():
             _nail_classes = {int(k): v for k, v in raw_map.items()}
             num_classes = len(_nail_classes)
             
-            model = NailDiseaseModel(num_classes=num_classes).to(DEVICE)
-            state_dict = torch.load(model_path, map_location=DEVICE)
+            model = NailDiseaseModel(num_classes=num_classes).to(get_device())
+            state_dict = torch.load(model_path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _nail_model = model
@@ -203,13 +172,13 @@ def preprocess_image(img_bgr, target_size):
     img_normalized = img_resized.astype(np.float32) / 255.0
     
     # ImageNet normalization
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     img_normalized = (img_normalized - mean) / std
     
     # Convert to tensor (CHW format)
     img_tensor = torch.from_numpy(img_normalized.transpose(2, 0, 1)).unsqueeze(0)
-    return img_tensor.to(DEVICE)
+    return img_tensor.to(get_device()), img_resized
 
 
 # --- Inference Functions ---
@@ -226,21 +195,30 @@ def predict_burns(img_bgr, debug=False):
     debug_info = {}
     
     try:
-        img_tensor = preprocess_image(img_bgr, IMG_SIZE_LARGE)
+        print("🔥 Preprocessing Burns Image...", flush=True)
+        img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
         
+        print("🔥 Running Burns Model Forward Pass...", flush=True)
         with torch.no_grad():
             output = model(img_tensor)
             prob = torch.sigmoid(output).item()
+        
+        print(f"🔥 Burns Prob: {prob}", flush=True)
         
         # 0 = healthy, 1 = burn
         if prob > 0.5:
-            label = "Burn"
+            label = "Burns Detected"
             conf = prob
         else:
-            label = "Healthy"
+            label = "Healthy/Normal"
             conf = 1 - prob
         
         debug_info["raw_probability"] = float(prob)
+        
+        # Add Debug Image (Input Crop)
+        if debug:
+            _, buffer = cv2.imencode('.jpg', img_resized)
+            debug_info["debug_image"] = "data:image/jpeg;base64," + base64.b64encode(buffer).decode('utf-8')
         
         return label, conf, debug_info
         
@@ -248,38 +226,7 @@ def predict_burns(img_bgr, debug=False):
         return "Error", 0.0, {"error": str(e)}
 
 
-def predict_hairloss(img_bgr, debug=False):
-    """
-    Predict hairloss detection
-    Returns: (label, confidence, debug_info)
-    """
-    model = get_hairloss_model()
-    if model is None:
-        return "Model Not Loaded", 0.0, {"error": "Hairloss model not available"}
-    
-    debug_info = {}
-    
-    try:
-        img_tensor = preprocess_image(img_bgr, IMG_SIZE_SMALL)
-        
-        with torch.no_grad():
-            output = model(img_tensor)
-            prob = torch.sigmoid(output).item()
-        
-        # 0 = not bald, 1 = bald
-        if prob > 0.5:
-            label = "Bald"
-            conf = prob
-        else:
-            label = "Not Bald"
-            conf = 1 - prob
-        
-        debug_info["raw_probability"] = float(prob)
-        
-        return label, conf, debug_info
-        
-    except Exception as e:
-        return "Error", 0.0, {"error": str(e)}
+
 
 
 def predict_nail_disease(img_bgr, debug=False):
@@ -294,7 +241,7 @@ def predict_nail_disease(img_bgr, debug=False):
     debug_info = {}
     
     try:
-        img_tensor = preprocess_image(img_bgr, IMG_SIZE_LARGE)
+        img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
         
         with torch.no_grad():
             output = model(img_tensor)
@@ -310,18 +257,21 @@ def predict_nail_disease(img_bgr, debug=False):
         topk_conf = topk_conf[0].cpu().numpy()
         topk_idx = topk_idx[0].cpu().numpy()
         
-        top_3 = []
-        for i in range(len(topk_idx)):
+        top3 = []
+        for i in range(len(topk_idx)): # Iterate up to the actual number of topk results
             class_name = _nail_classes.get(int(topk_idx[i]), f"Class {topk_idx[i]}")
-            score = float(topk_conf[i])
-            top_3.append({"label": class_name, "confidence": score})
+            top3.append({"label": class_name, "confidence": score})
         
-        debug_info["top_3"] = top_3
+        debug_info["top_3"] = top3
+        
+        # Add Debug Image (Input Crop)
+        if debug:
+            _, buffer = cv2.imencode('.jpg', img_resized)
+            debug_info["debug_image"] = "data:image/jpeg;base64," + base64.b64encode(buffer).decode('utf-8')
         
         return label, conf, debug_info
         
     except Exception as e:
         return "Error", 0.0, {"error": str(e)}
-
 
 

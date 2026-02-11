@@ -18,7 +18,6 @@ from inference_pytorch import (
 
 from inference_new_models import (
     predict_burns,
-    predict_hairloss,
     predict_nail_disease
 )
 
@@ -95,14 +94,7 @@ class InferenceService:
             logger.error(f"Burns inference failed: {e}")
             return "Error", 0.0, {"error": str(e)}
     
-    @staticmethod
-    def predict_hairloss(img_bgr, debug=False):
-        """Predict hairloss detection"""
-        try:
-            return predict_hairloss(img_bgr, debug)
-        except Exception as e:
-            logger.error(f"Hairloss inference failed: {e}")
-            return "Error", 0.0, {"error": str(e)}
+
     
     @staticmethod
     def predict_nail_disease(img_bgr, debug=False):
