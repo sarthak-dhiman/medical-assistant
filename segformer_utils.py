@@ -5,7 +5,16 @@ from transformers import SegformerImageProcessor, AutoModelForSemanticSegmentati
 from PIL import Image
 import sys
 import os
+import logging
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants for edge case handling
+MIN_IMAGE_SIZE = 10
+MAX_IMAGE_SIZE = 4096
+MAX_GPU_MEMORY_GB = 8
 
 
 class SegFormerWrapper:
@@ -127,56 +136,175 @@ class SegFormerWrapper:
     def is_ready(self):
         return self.model is not None
 
+    def validate_image(self, image, context="image"):
+        """Comprehensive image validation."""
+        if image is None:
+            return False, f"{context} is None"
+        
+        if not isinstance(image, (np.ndarray, Image.Image)):
+            return False, f"{context} is not a valid image type, got {type(image)}"
+        
+        if isinstance(image, np.ndarray):
+            if image.size == 0:
+                return False, f"{context} is empty"
+            
+            if len(image.shape) < 2:
+                return False, f"{context} has insufficient dimensions"
+            
+            h, w = image.shape[:2]
+            
+            if h < MIN_IMAGE_SIZE or w < MIN_IMAGE_SIZE:
+                return False, f"{context} too small: {w}x{h}"
+            
+            if h > MAX_IMAGE_SIZE or w > MAX_IMAGE_SIZE:
+                return False, f"{context} too large: {w}x{h}"
+            
+            if np.isnan(image).any() or np.isinf(image).any():
+                return False, f"{context} contains NaN/Inf values"
+        
+        return True, "Valid"
+
     def predict(self, image):
         """
         Runs inference on a single image (numpy array BGR or RGB).
         Returns class mask (H, W).
+        
+        Edge cases handled:
+        - Model not loaded
+        - Invalid image types
+        - NaN/Inf values
+        - GPU OOM
+        - Device mismatch
         """
+        # Validate input
+        is_valid, msg = self.validate_image(image, "predict input")
+        if not is_valid:
+            logger.error(f"SegFormer predict validation failed: {msg}")
+            # Return empty mask with same dimensions if available
+            if isinstance(image, np.ndarray) and len(image.shape) >= 2:
+                return np.zeros(image.shape[:2], dtype=np.uint8)
+            return np.zeros((480, 640), dtype=np.uint8)  # Default fallback
+        
         if self.model is None:
-            print("SegFormer Predict called but model is None!")
+            logger.warning("SegFormer Predict called but model is None!")
             # Return an empty mask if the model failed to load
             if isinstance(image, np.ndarray):
                 return np.zeros(image.shape[:2], dtype=np.uint8)
             elif isinstance(image, Image.Image):
                 return np.zeros(image.size[::-1], dtype=np.uint8)
             else:
-                raise ValueError("Unsupported image type. Must be numpy array or PIL Image.")
+                return np.zeros((480, 640), dtype=np.uint8)
 
-        # Convert to PIL (RGB)
-        if isinstance(image, np.ndarray):
-            # Assume BGR if 3 channels, convert to RGB
-            if image.ndim == 3 and image.shape[2] == 3:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            image_pil = Image.fromarray(image)
-        else:
-            image_pil = image
+        try:
+            # Convert to PIL (RGB)
+            if isinstance(image, np.ndarray):
+                # Ensure we have valid dimensions
+                if len(image.shape) < 2:
+                    raise ValueError(f"Image has insufficient dimensions: {image.shape}")
+                
+                # Assume BGR if 3 channels, convert to RGB
+                if image.ndim == 3 and image.shape[2] == 3:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                elif image.ndim == 2:
+                    # Grayscale to RGB
+                    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+                elif image.ndim == 3 and image.shape[2] == 4:
+                    # RGBA to RGB
+                    image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+                    
+                image_pil = Image.fromarray(image)
+            else:
+                image_pil = image
+                # Convert PIL to numpy to check size
+                img_array = np.array(image_pil)
+                if len(img_array.shape) >= 2:
+                    h, w = img_array.shape[:2]
+                    if h > MAX_IMAGE_SIZE or w > MAX_IMAGE_SIZE:
+                        logger.warning(f"Image too large, resizing: {w}x{h}")
+                        image_pil = image_pil.resize((min(w, MAX_IMAGE_SIZE), min(h, MAX_IMAGE_SIZE)))
             
-        inputs = self.processor(images=image_pil, return_tensors="pt")
-        
-        # Move inputs to device
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        # Ensure model is on device (lazy move)
-        if self.model.device.type != self.device:
-            self.model.to(self.device)
+            # Process with error handling
+            try:
+                inputs = self.processor(images=image_pil, return_tensors="pt")
+            except Exception as e:
+                logger.error(f"SegFormer processor failed: {e}")
+                # Fallback: return empty mask
+                if isinstance(image, np.ndarray):
+                    return np.zeros(image.shape[:2], dtype=np.uint8)
+                return np.zeros((image_pil.size[1], image_pil.size[0]), dtype=np.uint8)
+            
+            # Move inputs to device with error handling
+            try:
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    logger.warning("GPU OOM moving inputs, falling back to CPU")
+                    self.device = "cpu"
+                    self.model.to("cpu")
+                    torch.cuda.empty_cache()
+                    inputs = {k: v.to("cpu") for k, v in inputs.items()}
+                else:
+                    raise
+            
+            # Ensure model is on device (lazy move)
+            if self.model.device.type != self.device:
+                try:
+                    self.model.to(self.device)
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        logger.warning("GPU OOM moving model, using CPU")
+                        self.device = "cpu"
+                        self.model.to("cpu")
+                        torch.cuda.empty_cache()
+                        inputs = {k: v.to("cpu") for k, v in inputs.items()}
+                    else:
+                        raise
 
-        with torch.no_grad():
-            outputs = self.model(**inputs)
+            with torch.no_grad():
+                try:
+                    outputs = self.model(**inputs)
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        logger.error("GPU OOM during inference")
+                        torch.cuda.empty_cache()
+                        # Return empty mask on OOM
+                        if isinstance(image, np.ndarray):
+                            return np.zeros(image.shape[:2], dtype=np.uint8)
+                        return np.zeros((image_pil.size[1], image_pil.size[0]), dtype=np.uint8)
+                    raise
+                
+            logits = outputs.logits  # shape (1, num_labels, H/4, W/4)
             
-        logits = outputs.logits  # shape (1, num_labels, H/4, W/4)
-        
-        # Upsample logits to original size
-        upsampled_logits = torch.nn.functional.interpolate(
-            logits,
-            size=image_pil.size[::-1], # (H, W)
-            mode="bilinear",
-            align_corners=False,
-        )
-        
-        # Argmax to get labels
-        pred_seg = upsampled_logits.argmax(dim=1)[0] # (H, W)
-        
-        return pred_seg.cpu().numpy().astype(np.uint8)
+            # Upsample logits to original size
+            upsampled_logits = torch.nn.functional.interpolate(
+                logits,
+                size=image_pil.size[::-1],  # (H, W)
+                mode="bilinear",
+                align_corners=False,
+            )
+            
+            # Argmax to get labels
+            pred_seg = upsampled_logits.argmax(dim=1)[0]  # (H, W)
+            
+            result = pred_seg.cpu().numpy().astype(np.uint8)
+            
+            # Validate result
+            if result.size == 0:
+                logger.error("SegFormer produced empty result")
+                if isinstance(image, np.ndarray):
+                    return np.zeros(image.shape[:2], dtype=np.uint8)
+                return np.zeros((image_pil.size[1], image_pil.size[0]), dtype=np.uint8)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"SegFormer predict error: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return empty mask on error
+            if isinstance(image, np.ndarray) and len(image.shape) >= 2:
+                return np.zeros(image.shape[:2], dtype=np.uint8)
+            return np.zeros((480, 640), dtype=np.uint8)
 
     def get_eye_rois(self, mask, image_bgr):
         """

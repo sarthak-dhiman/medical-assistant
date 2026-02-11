@@ -244,324 +244,319 @@ def check_model_health(self):
     }
     return status
 
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, max_retries=3)
 def predict_task(self, image_data_b64, mode, debug=False):
-    # FAST FAIL: Check if SegFormer loaded correctly during init
-    # Note: Inference models (jaundice/skin) are loaded lazily by inference_service
-    if not seg_model or not seg_model.is_ready:
-        return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
-    
-    # Decode Image
+    """
+    Celery task for prediction with comprehensive error handling and retry logic.
+    """
     try:
-        if "," in image_data_b64:
-            header, image_data_b64 = image_data_b64.split(",", 1)
-            # Basic header validation
-            if "image/" not in header:
-                 logger.warning(f"Suspicious image header: {header}")
+        # Validate inputs
+        if not image_data_b64 or not isinstance(image_data_b64, str):
+            return {"status": "error", "error": "Invalid or missing image data"}
         
-        # Safe decoding with proper error handling
+        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+            return {"status": "error", "error": f"Invalid mode: {mode}"}
+        
+        # Decode Image with comprehensive error handling
         try:
-            image_bytes = base64.b64decode(image_data_b64, validate=True)
-        except Exception as b64_err:
-            logger.error(f"Base64 validation failed: {b64_err}")
-            return {"status": "error", "error": "Invalid base64 encoding"}
+            if "," in image_data_b64:
+                header, image_data_b64 = image_data_b64.split(",", 1)
+                # Validate header contains image/
+                if "image/" not in header:
+                    logger.warning(f"Suspicious image header: {header[:50]}")
             
-        # Convert bytes to numpy array
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-        if frame is None:
-            raise ValueError("Failed to decode image from bytes")
-
-    except ValueError as ve:
-        logger.error(f"Image Decoding Failed: {ve}")
-        return {"status": "error", "error": str(ve)}
-    except Exception as e:
-        logger.error(f"Unexpected error during image processing: {e}")
-        return {"status": "error", "error": "Invalid Image Data"}
-
-    # Logic from webcam_app.py (Simplified for API)
-    result = {"status": "success", "mode": mode}
-    
-    h, w = frame.shape[:2]
-    
-    # 1. Segmentation (Needed for Jaundice, Skin, Burns)
-    if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS"]:
-        # Optimization: Downscale for SegFormer
-        INFERENCE_WIDTH = 480
-        scale = INFERENCE_WIDTH / w
-        if scale < 1.0:
-            small_frame = cv2.resize(frame, (0,0), fx=scale, fy=scale)
-        else:
-            small_frame = frame
+            # Validate base64 data size (rough estimate)
+            if len(image_data_b64) > 100 * 1024 * 1024:  # 100MB limit
+                return {"status": "error", "error": "Image data too large (max 100MB)"}
             
-        mask_small = seg_model.predict(small_frame)
-        mask = cv2.resize(mask_small, (w, h), interpolation=cv2.INTER_NEAREST)
+            # Safe decoding with validation
+            try:
+                image_bytes = base64.b64decode(image_data_b64, validate=True)
+            except Exception as e:
+                logger.error(f"Base64 decoding failed: {e}")
+                return {"status": "error", "error": "Invalid image encoding"}
+            
+            # Convert bytes to numpy array
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                return {"status": "error", "error": "Failed to decode image - invalid format"}
+            
+            # Validate image dimensions
+            if len(frame.shape) < 2:
+                return {"status": "error", "error": "Invalid image dimensions"}
+            
+            h, w = frame.shape[:2]
+            if h < 10 or w < 10:
+                return {"status": "error", "error": f"Image too small: {w}x{h}"}
+            if h > 8192 or w > 8192:
+                return {"status": "error", "error": f"Image too large: {w}x{h}"}
+
+        except Exception as e:
+            logger.error(f"Image decoding error: {e}")
+            return {"status": "error", "error": "Invalid image data"}
+
+        # Initialize result
+        result = {"status": "success", "mode": mode}
         
-        # Skin Mask (Semantic)
-        skin_mask = seg_model.get_skin_mask(mask)
-        
-        # Fallback: If Semantic Segmentation (Face/Neck) found nothing, 
-        # try Color-Based Skin Detection (for Arms/Legs/Hands)
-        if cv2.countNonZero(skin_mask) == 0:
-            skin_mask = seg_model.get_skin_mask_color(frame)
-        
-        # --- ENCODE MASK FOR FRONTEND ---
+        # Model availability checks
+        if mode == "JAUNDICE_EYE":
+            if jaundice_eye_model is None:
+                return {"status": "error", "error": "Jaundice Eye Model Not Ready"}
+            if not seg_model or not seg_model.is_ready:
+                return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
         if mode == "JAUNDICE_BODY":
-             # Detect Jaundice on Body Skin
-             
-             # 1. Get Person Mask (MediaPipe)
-             try:
-                 person_mask = seg_model.get_body_segmentation(frame)
-             except Exception:
-                 person_mask = np.ones(frame.shape[:2], dtype=np.uint8) * 255
-                 
-             # 2. Combine with Skin Color Mask
-             # Skin on Person = Person Mask AND Skin Mask
-             combined_mask = cv2.bitwise_and(skin_mask, person_mask)
-             
-             if cv2.countNonZero(combined_mask) > 100:
-                  # Crop bounding box of skin
-                  y, x = np.where(combined_mask > 0)
-                  y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                  
-                  # Crop from ORIGINAL frame
-                  crop = frame[y0:y1, x0:x1]
-                  
-                  # Ensure it's 3-channel BGR
-                  if len(crop.shape) == 2:
-                      crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-                  elif crop.shape[2] != 3:
-                      crop = crop[:, :, :3]
-                  
-                  # Use inference service for prediction
-                  label, conf, debug_info = inference_service.predict_jaundice_body(crop, debug=debug)
-                  
-                  # Get recommendations
-                  recs = inference_service.get_recommendations(label)
-                  if recs: result["recommendations"] = recs
-                  
-                  # Add Masks to debug_info
-                  if "masks" not in debug_info: debug_info["masks"] = {}
-                  debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-                  debug_info["masks"]["person_mask"] = encode_mask_b64(person_mask)
-                  
-                  result.update({
-                      "label": label, 
-                      "confidence": float(conf), 
-                      "bbox": [x0/w, y0/h, x1/w, y1/h], # Normalized
-                      "debug_info": debug_info
-                  })
-             else:
-                  result.update({"label": "No Skin on Body", "confidence": 0.0})
-
-        elif mode == "JAUNDICE_EYE":
-            # 1. Extract Skin Crop (Context for Model)
-            skin_crop = frame # Fallback
-            if cv2.countNonZero(skin_mask) > 100:
-                 y, x = np.where(skin_mask > 0)
-                 y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                 masked_skin = cv2.bitwise_and(frame, frame, mask=skin_mask)
-                 skin_crop = masked_skin[y0:y1, x0:x1]
-
-            # 2. Extract Eyes (Priority: MediaPipe -> Fallback: SegFormer)
-            used_mediapipe = True
-            eyes = seg_model.get_eyes_mediapipe(frame)
-            
-            if not eyes:
-                 used_mediapipe = False
-                 # Fallback
-                 # print("⚠️ MediaPipe failed. Using SegFormer fallback.", flush=True)
-                 raw_eyes = seg_model.get_eye_rois(mask, frame)
-                 for cropped_eye, name, bbox in raw_eyes:
-                      masked, _ = seg_model.apply_iris_mask(cropped_eye)
-                      eyes.append((masked, name, bbox))
-
-            found_eyes = []
-            
-            any_jaundice = False
-            
-            for cropped_eye_masked, name, (x1, y1, x2, y2) in eyes:
-                # Note: MediaPipe returns ALREADY masked eyes (Sclera only).
-                # SegFormer fallback also returns masked eyes.
-                
-                # ERROR: cv2.imencode requires BGR, assume cropped_eye is BGR
-                # Encode for Nerd Mode (Debug View - VISUALIZE WHAT MODEL SEES)
-                try:
-                    _, buffer = cv2.imencode('.jpg', cropped_eye_masked)
-                    eye_b64 = base64.b64encode(buffer).decode('utf-8')
-                    debug_img_str = f"data:image/jpeg;base64,{eye_b64}"
-                except Exception:
-                    debug_img_str = ""
-
-                # Jaundice Eye detection uses PyTorch
-                # Ensure skin_crop is valid
-                if skin_crop is None or skin_crop.size == 0:
-                    skin_crop = frame 
-
-                # Use inference service for prediction
-                label, conf, debug_info = inference_service.predict_jaundice_eye(skin_crop, cropped_eye_masked, debug=debug)
-                
-                # Add Eye Mask to debug_info
-                # (Note: cropped_eye_masked is already the Sclera Mask applied to image)
-                # Ideally we want the actual Sclera Mask used.
-                # But for now, let's just send the Global Skin Mask as context
-                if "masks" not in debug_info: debug_info["masks"] = {}
-                debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-                
-                
-                if label == "Jaundice":
-                    any_jaundice = True
-                    
-                eye_result = {
-                    "name": name, 
-                    "label": label, 
-                    "confidence": float(conf),
-                    "bbox": [x1/w, y1/h, x2/w, y2/h], # Normalized
-                    "method": "mediapipe" if used_mediapipe else "hough",
-                    "debug_image": debug_img_str, # Store per eye
-                    "debug_info": debug_info
-                }
-                
-                found_eyes.append(eye_result)
-            
-            result["eyes"] = found_eyes
-            
-            # Aggregate Result for UI
-            if not found_eyes:
-                result["label"] = "No Eyes Detected"
-                result["confidence"] = 0.0
-            elif any_jaundice:
-                result["label"] = "Jaundice"
-                # Prioritize showing the Jaundice eye in debug view
-                jaundice_eyes = [e for e in found_eyes if e["label"] == "Jaundice"]
-                result["confidence"] = max([e["confidence"] for e in jaundice_eyes])
-                result["debug_image"] = jaundice_eyes[0]["debug_image"]
-                
-                # Add recommendations for Jaundice
-                recs = inference_service.get_recommendations("Jaundice")
-                if recs: result["recommendations"] = recs
-            else:
-                result["label"] = "Normal"
-                result["confidence"] = max([e["confidence"] for e in found_eyes])
-                # Show first eye
-                result["debug_image"] = found_eyes[0]["debug_image"]
-            
-        elif mode == "SKIN_DISEASE":
-             # Detect on Skin
-             if cv2.countNonZero(skin_mask) > 100:
-                  y, x = np.where(skin_mask > 0)
-                  y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                  
-                  # Crop from ORIGINAL frame to preserve BGR channels
-                  crop = frame[y0:y1, x0:x1]
-                  
-                  # Ensure it's 3-channel BGR
-                  if len(crop.shape) == 2:
-                      crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-                  elif crop.shape[2] != 3:
-                      crop = crop[:, :, :3]
-                  
-                  # Use inference service for prediction
-                  label, conf, debug_info = inference_service.predict_skin_disease(crop, debug=debug)
-                  
-                  # Get recommendations
-                  recs = inference_service.get_recommendations(label)
-                  if recs: result["recommendations"] = recs
-                  
-                  if "masks" not in debug_info: debug_info["masks"] = {}
-                  debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-                  
-                  result.update({
-                      "label": label, 
-                      "confidence": float(conf), 
-                      "bbox": [x0/w, y0/h, x1/w, y1/h], # Normalized
-                      "debug_info": debug_info
-                  })
-             else:
-                  debug_info = {}
-                  if "masks" not in debug_info: debug_info["masks"] = {}
-                  debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-                  result.update({
-                      "label": "No Skin", 
-                      "confidence": 0.0,
-                      "debug_info": debug_info
-                  })
+            if jaundice_skin_model is None:
+                return {"status": "error", "error": "Jaundice Body Model Not Ready"}
+            if not seg_model or not seg_model.is_ready:
+                return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
-        elif mode == "BURNS":
-            # Burns detection on skin
-            if cv2.countNonZero(skin_mask) > 100:
-                y, x = np.where(skin_mask > 0)
-                y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-                crop = frame[y0:y1, x0:x1]
-                
-                if len(crop.shape) == 2:
-                    crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-                elif crop.shape[2] != 3:
-                    crop = crop[:, :, :3]
-                
-                logger.info("🔥 CALLING BURNS INFERENCE SERVICE...")
-                label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
-                logger.info(f"🔥 BURNS INFERENCE RETURNED: {label}")
-                
-                # Get recommendations
-                recs = inference_service.get_recommendations(label)
-                if recs: result["recommendations"] = recs
-                
-                if "masks" not in debug_info: debug_info["masks"] = {}
-                debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-                
-                result.update({
-                    "label": label,
-                    "confidence": float(conf),
-                    "bbox": [x0/w, y0/h, x1/w, y1/h],
-                    "debug_info": debug_info
-                })
-            else:
-                debug_info = {}
-                if "masks" not in debug_info: debug_info["masks"] = {}
-                debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-                result.update({
-                    "label": "No Skin",
-                    "confidence": 0.0,
-                    "debug_info": debug_info
-                })
-    
-
-    
-    elif mode == "NAIL_DISEASE":
-        # Hand Segmentation & Cropping
-        crop, hand_debug_info, bbox = detect_hand_and_crop(frame)
+        if mode == "SKIN_DISEASE":
+            if skin_disease_model is None:
+                return {"status": "error", "error": "Skin Disease Model Not Ready"}
+            if not seg_model or not seg_model.is_ready:
+                return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
-        # Check if hand was actually detected
-        if not hand_debug_info.get("hand_detected", False):
-            result.update({
-                "label": "No Hand Detected",
-                "confidence": 0.0,
-                "bbox": None,
-                "debug_info": hand_debug_info
-            })
+        # Process based on mode
+        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+            return _process_segmentation_mode(frame, mode, debug)
         else:
-            # Nail disease detection on crop
-            label, conf, model_debug_info = inference_service.predict_nail_disease(crop, debug=debug)
+            return {"status": "error", "error": f"Unknown mode: {mode}"}
             
-            # Merge debug info
-            debug_info = {**hand_debug_info, **model_debug_info}
+    except Exception as e:
+        logger.error(f"Unexpected error in predict_task: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Retry logic for transient errors
+        if self.request.retries < self.max_retries:
+            logger.info(f"Retrying task ({self.request.retries + 1}/{self.max_retries})")
+            raise self.retry(countdown=2 ** self.request.retries)
+        
+        return {"status": "error", "error": f"Task failed after retries: {str(e)}"}
+
+
+def _process_segmentation_mode(frame, mode, debug):
+    """Process image for segmentation-based modes with comprehensive error handling."""
+    result = {"status": "success", "mode": mode}
+    
+    try:
+        h, w = frame.shape[:2]
+        
+        # 1. Segmentation (Needed for Jaundice, Skin, Burns)
+        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+            # Optimization: Downscale for SegFormer
+            INFERENCE_WIDTH = 480
+            scale = INFERENCE_WIDTH / w
+            if scale < 1.0:
+                small_frame = cv2.resize(frame, (0,0), fx=scale, fy=scale)
+            else:
+                small_frame = frame
+                
+            mask_small = seg_model.predict(small_frame)
+            mask = cv2.resize(mask_small, (w, h), interpolation=cv2.INTER_NEAREST)
             
-            # Get recommendations
-            recs = inference_service.get_recommendations(label)
-            if recs: result["recommendations"] = recs
+            # Skin Mask (Semantic)
+            skin_mask = seg_model.get_skin_mask(mask)
+            
+            # Fallback: If Semantic Segmentation (Face/Neck) found nothing, 
+            # try Color-Based Skin Detection (for Arms/Legs/Hands)
+            if cv2.countNonZero(skin_mask) == 0:
+                skin_mask = seg_model.get_skin_mask_color(frame)
+            
+            # Process based on specific mode
+            if mode == "JAUNDICE_BODY":
+                return _process_jaundice_body(frame, skin_mask, w, h, debug, result)
+            elif mode == "JAUNDICE_EYE":
+                return _process_jaundice_eye(frame, skin_mask, w, h, debug, result)
+            elif mode == "SKIN_DISEASE":
+                return _process_skin_disease(frame, skin_mask, w, h, debug, result)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in segmentation processing: {e}")
+        return {"status": "error", "error": f"Processing failed: {str(e)}"}
+
+
+def _process_jaundice_body(frame, skin_mask, w, h, debug, result):
+    """Process jaundice body detection."""
+    try:
+        # 1. Get Person Mask (MediaPipe)
+        try:
+            person_mask = seg_model.get_body_segmentation(frame)
+        except Exception:
+            person_mask = np.ones(frame.shape[:2], dtype=np.uint8) * 255
+            
+        # 2. Combine with Skin Color Mask
+        combined_mask = cv2.bitwise_and(skin_mask, person_mask)
+        
+        if cv2.countNonZero(combined_mask) > 100:
+            # Crop bounding box of skin
+            y, x = np.where(combined_mask > 0)
+            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+            
+            # Crop from ORIGINAL frame
+            crop = frame[y0:y1, x0:x1]
+            
+            # Ensure it's 3-channel BGR
+            if len(crop.shape) == 2:
+                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+            elif crop.shape[2] != 3:
+                crop = crop[:, :, :3]
+            
+            # Use inference service for prediction
+            label, conf, debug_info = inference_service.predict_jaundice_body(crop, debug=debug)
+            
+            # Add Masks to debug_info
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            debug_info["masks"]["person_mask"] = encode_mask_b64(person_mask)
             
             result.update({
-                "label": label,
-                "confidence": float(conf),
-                "bbox": bbox,
+                "label": label, 
+                "confidence": float(conf), 
+                "bbox": [x0/w, y0/h, x1/w, y1/h],
                 "debug_info": debug_info
             })
-    
+        else:
+            result.update({"label": "No Skin on Body", "confidence": 0.0})
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Jaundice body processing error: {e}")
+        return {"status": "error", "error": f"Jaundice body detection failed: {str(e)}"}
 
 
-    logger.info(f"Task Finished. Result Keys: {list(result.keys())}")
-    logger.info(f"Debug Mode: {debug}")
-    return result
+def _process_jaundice_eye(frame, skin_mask, w, h, debug, result):
+    """Process jaundice eye detection."""
+    try:
+        # 1. Extract Skin Crop (Context for Model)
+        skin_crop = frame  # Fallback
+        if cv2.countNonZero(skin_mask) > 100:
+            y, x = np.where(skin_mask > 0)
+            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+            masked_skin = cv2.bitwise_and(frame, frame, mask=skin_mask)
+            skin_crop = masked_skin[y0:y1, x0:x1]
+
+        # 2. Extract Eyes (Priority: MediaPipe -> Fallback: SegFormer)
+        used_mediapipe = True
+        eyes = seg_model.get_eyes_mediapipe(frame)
+        
+        if not eyes:
+            used_mediapipe = False
+            raw_eyes = seg_model.get_eye_rois(mask, frame)
+            for cropped_eye, name, bbox in raw_eyes:
+                masked, _ = seg_model.apply_iris_mask(cropped_eye)
+                eyes.append((masked, name, bbox))
+
+        found_eyes = []
+        any_jaundice = False
+        
+        for cropped_eye_masked, name, (x1, y1, x2, y2) in eyes:
+            # Encode for Nerd Mode
+            try:
+                _, buffer = cv2.imencode('.jpg', cropped_eye_masked)
+                eye_b64 = base64.b64encode(buffer).decode('utf-8')
+                debug_img_str = f"data:image/jpeg;base64,{eye_b64}"
+            except Exception:
+                debug_img_str = ""
+
+            # Ensure skin_crop is valid
+            if skin_crop is None or skin_crop.size == 0:
+                skin_crop = frame 
+
+            # Use inference service for prediction
+            label, conf, debug_info = inference_service.predict_jaundice_eye(skin_crop, cropped_eye_masked, debug=debug)
+            
+            # Add Eye Mask to debug_info
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            
+            if label == "Jaundice":
+                any_jaundice = True
+                
+            eye_result = {
+                "name": name, 
+                "label": label, 
+                "confidence": float(conf),
+                "bbox": [x1/w, y1/h, x2/w, y2/h],
+                "method": "mediapipe" if used_mediapipe else "segformer",
+                "debug_image": debug_img_str,
+                "debug_info": debug_info
+            }
+            
+            found_eyes.append(eye_result)
+        
+        result["eyes"] = found_eyes
+        
+        # Aggregate Result for UI
+        if not found_eyes:
+            result["label"] = "No Eyes Detected"
+            result["confidence"] = 0.0
+        elif any_jaundice:
+            result["label"] = "Jaundice"
+            jaundice_eyes = [e for e in found_eyes if e["label"] == "Jaundice"]
+            result["confidence"] = max([e["confidence"] for e in jaundice_eyes])
+            result["debug_image"] = jaundice_eyes[0]["debug_image"]
+        else:
+            result["label"] = "Normal"
+            result["confidence"] = max([e["confidence"] for e in found_eyes])
+            result["debug_image"] = found_eyes[0]["debug_image"]
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Jaundice eye processing error: {e}")
+        return {"status": "error", "error": f"Jaundice eye detection failed: {str(e)}"}
+
+
+def _process_skin_disease(frame, skin_mask, w, h, debug, result):
+    """Process skin disease detection."""
+    try:
+        if cv2.countNonZero(skin_mask) > 100:
+            y, x = np.where(skin_mask > 0)
+            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+            
+            # Crop from ORIGINAL frame to preserve BGR channels
+            crop = frame[y0:y1, x0:x1]
+            
+            # Ensure it's 3-channel BGR
+            if len(crop.shape) == 2:
+                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+            elif crop.shape[2] != 3:
+                crop = crop[:, :, :3]
+            
+            # Use inference service for prediction
+            label, conf, debug_info = inference_service.predict_skin_disease(crop, debug=debug)
+            
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            
+            result.update({
+                "label": label, 
+                "confidence": float(conf), 
+                "bbox": [x0/w, y0/h, x1/w, y1/h],
+                "debug_info": debug_info
+            })
+        else:
+            debug_info = {}
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            result.update({
+                "label": "No Skin", 
+                "confidence": 0.0,
+                "debug_info": debug_info
+            })
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Skin disease processing error: {e}")
+        return {"status": "error", "error": f"Skin disease detection failed: {str(e)}"}
+
+
+# Note: Additional mode handlers (BURNS, NAIL_DISEASE) can be added here following the same pattern

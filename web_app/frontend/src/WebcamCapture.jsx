@@ -38,33 +38,62 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const CAPTURE_INTERVAL = 500 // ms (2 FPS for inference)
 
     const captureAndPredict = useCallback(async () => {
-        if (isProcessing) return // Skip if busy
-
-        // Determine Source
-        let imageSrc = null;
-        if (uploadedImage) {
-            imageSrc = uploadedImage;
-        } else if (webcamRef.current) {
-            imageSrc = webcamRef.current.getScreenshot();
+        // Comprehensive input validation
+        if (isProcessing) {
+            console.log("Skipping capture: already processing");
+            return;
         }
 
-        if (!imageSrc) return
+        // Determine Source with validation
+        let imageSrc = null;
+        try {
+            if (uploadedImage) {
+                // Validate uploaded image format
+                if (typeof uploadedImage !== 'string' || uploadedImage.length === 0) {
+                    console.error("Invalid uploaded image format");
+                    setError("Invalid Image Format");
+                    return;
+                }
+                // Check for oversized images (>50MB base64)
+                if (uploadedImage.length > 50 * 1024 * 1024 * 1.37) {
+                    console.error("Image too large");
+                    setError("Image Too Large (Max 50MB)");
+                    return;
+                }
+                imageSrc = uploadedImage;
+            } else if (webcamRef.current) {
+                imageSrc = webcamRef.current.getScreenshot();
+                if (!imageSrc) {
+                    console.warn("Failed to capture screenshot from webcam");
+                    return;
+                }
+            }
+        } catch (e) {
+            console.error("Error getting image source:", e);
+            setError("Camera Error");
+            return;
+        }
+
+        if (!imageSrc) {
+            console.log("No image source available");
+            return;
+        }
 
         // Optimization: Skip if same image & mode (Only for uploaded images or stable states)
         if (uploadedImage &&
             lastRequestRef.current.image === imageSrc &&
             lastRequestRef.current.mode === mode &&
-            (result || error) // If we already have a result OR error, don't re-fetch
+            (result || error)
         ) {
             return;
         }
 
+        // Update Cache
+        lastRequestRef.current = { image: imageSrc, mode: mode }
+
         setIsProcessing(true)
         setError(null)
         const startTime = Date.now()
-
-        // Update Cache
-        lastRequestRef.current = { image: imageSrc, mode: mode }
 
         try {
             // 1. DESKTOP BRIDGE (Native ONNX)
@@ -72,8 +101,15 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 // pywebview exposes 'predict' method via 'window.pywebview.api'
                 // The backend returns the final result directly (synchronous inference)
                 const result = await window.pywebview.api.predict(imageSrc, mode, isNerdMode)
+                
+                // Validate result
+                if (!result || typeof result !== 'object') {
+                    throw new Error("Invalid result from pywebview");
+                }
+                
                 setResult(result)
                 setIsProcessing(false)
+                setIsGPUFull(false) // Reset GPU error state on success
 
                 // FPS Calc
                 const duration = Date.now() - startTime
@@ -82,35 +118,74 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             }
 
             // 2. WEB API (Standard Flow)
-            console.log("🤓 Sending Request - Nerd Mode:", isNerdMode, "Mode:", mode);
+            console.log("Sending Request - Nerd Mode:", isNerdMode, "Mode:", mode);
+            
+            // Add timeout and better error handling
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+            
             const response = await axios.post(`${API_URL}/predict`, {
                 image: imageSrc,
                 mode: mode,
                 debug: isNerdMode // Enable Grad-CAM/Stats if Nerd Mode is ON
-            })
+            }, {
+                signal: controller.signal,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            clearTimeout(timeoutId);
+
+            // Validate response
+            if (!response.data || !response.data.task_id) {
+                throw new Error("Invalid response from server: missing task_id");
+            }
 
             const { task_id } = response.data
 
-            // 2. Poll for Result
+            // 2. Poll for Result with improved error handling
             let pollAttempts = 0
+            const MAX_POLL_ATTEMPTS = 600 // 120s timeout
+            const POLL_INTERVAL = 200 // ms
+            
             const pollInterval = setInterval(async () => {
                 pollAttempts++
                 try {
-                    const res = await axios.get(`${API_URL}/result/${task_id}`)
+                    const res = await axios.get(`${API_URL}/result/${task_id}`, {
+                        timeout: 5000 // 5s timeout for poll requests
+                    })
+                    
                     if (res.data.state === 'SUCCESS') {
                         // PREVENT STALE UPDATES:
-                        if (mode !== latestModeRef.current) return;
-
-                        if (res.data.result && res.data.result.status === 'oom_error') {
-                            setIsGPUFull(true);
-                            setError("GPU Out of Memory");
+                        if (mode !== latestModeRef.current) {
                             clearInterval(pollInterval);
                             setIsProcessing(false);
                             return;
                         }
 
+                        // Handle GPU OOM
+                        if (res.data.result && res.data.result.status === 'oom_error') {
+                            setIsGPUFull(true);
+                            setError("GPU Out of Memory");
+                            setResult(null);
+                            clearInterval(pollInterval);
+                            setIsProcessing(false);
+                            return;
+                        }
+
+                        // Handle general errors
                         if (res.data.result && res.data.result.status === 'error') {
-                            setError(res.data.result.error);
+                            setError(res.data.result.error || "Prediction error");
+                            setResult(null);
+                            clearInterval(pollInterval);
+                            setIsProcessing(false);
+                            return;
+                        }
+
+                        // Validate result data
+                        if (!res.data.result || typeof res.data.result !== 'object') {
+                            setError("Invalid result format");
                             setResult(null);
                             clearInterval(pollInterval);
                             setIsProcessing(false);
@@ -118,6 +193,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         }
 
                         setResult(res.data.result)
+                        setIsGPUFull(false) // Reset GPU error on success
                         clearInterval(pollInterval)
                         setIsProcessing(false)
 
@@ -127,25 +203,42 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                     } else if (res.data.state === 'FAILURE') {
                         clearInterval(pollInterval)
                         setIsProcessing(false)
-                        setError("Prediction Failed")
-                    } else if (pollAttempts > 600) { // Timeout after 120s
+                        setError(res.data.error || "Prediction Failed")
+                        setResult(null)
+                    } else if (pollAttempts > MAX_POLL_ATTEMPTS) { // Timeout
                         clearInterval(pollInterval)
                         setIsProcessing(false)
                         setError("Timeout (Backend Slow)")
+                        setResult(null)
                     }
                 } catch (e) {
                     clearInterval(pollInterval)
                     setIsProcessing(false)
-                    setError("Network Error")
+                    if (e.code === 'ECONNABORTED' || e.message.includes('timeout')) {
+                        setError("Network Timeout")
+                    } else if (e.response) {
+                        setError(`Server Error: ${e.response.status}`)
+                    } else {
+                        setError("Network Error")
+                    }
+                    setResult(null)
                 }
-            }, 200)
+            }, POLL_INTERVAL)
 
         } catch (error) {
             console.error("Prediction Error:", error)
             setIsProcessing(false)
-            setError("Server Error")
+            if (error.name === 'AbortError' || error.code === 'ECONNABORTED') {
+                setError("Request Timeout")
+            } else if (error.response) {
+                setError(`Server Error: ${error.response.status}`)
+            } else if (error.request) {
+                setError("Network Error - No Response")
+            } else {
+                setError("Request Failed")
+            }
         }
-    }, [mode, uploadedImage]) // FIX: Simplified dependencies to prevent stale closures
+    }, [mode, uploadedImage, isNerdMode])
 
     // Auto-capture loop
     useEffect(() => {
