@@ -1,6 +1,7 @@
 # AI-Powered Jaundice & Skin Disease Assistant
 
-A containerized, mobile-first web application for the early detection of **Neonatal Jaundice**, **dermatological conditions**, **Burns**, **Hairloss**, and **Nail Diseases** using advanced computer vision and deep learning. (Total: **6 Detection Modes**)
+A containerized, mobile-first web application for the early detection of **Neonatal Jaundice**,
+**Jaundice in Adults**, **dermatological conditions**, **Burns**, and **Nail Diseases** using advanced computer vision and deep learning. (Total: **5 Detection Modes**)
 
 ![Project Status](https://img.shields.io/badge/Status-Active-success)
 ![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
@@ -23,7 +24,7 @@ The system is built as a microservices architecture to ensure scalability and ma
 ## AI Models & Methodology
 
 ### 1. Jaundice Eye Model (Adults)
-Target: **Jaundice Adult**
+Target: **Jaundice in Adults**
 -   **Methodology:** Utilizes **Google MediaPipe Face Mesh** to extract 468 facial landmarks.
 -   **Process:**
     1.  Detects face and eye landmarks in real-time.
@@ -32,7 +33,7 @@ Target: **Jaundice Adult**
 -   **Advantage:** Eliminates noise from skin tone or iris color, providing a pure analysis of scleral yellowing.
 
 ### 2. Jaundice Body Model (Neonates)
-Target: **Jaundice Baby**
+Target: **Jaundice in Infants**
 -   **Methodology:** Combines **MediaPipe Selfie Segmentation** with Color Space Analysis.
 -   **Process:**
     1.  Generates a binary mask of the human subject (removing background walls/bedsheets).
@@ -99,13 +100,7 @@ Target: **Acute Burn Injuries**
     3.  Classifies the ROI as **Burn** or **Healthy Skin**.
 -   **Capability:** Distinguishes between healthy skin and burn injuries with high accuracy.
 
-### 5. Hairloss Analysis Model
-Target: **Alopecia & Hair Health**
--   **Methodology:** Full-frame analysis using **EfficientNet-B3**.
--   **Training:** Optimized with **Focal Loss** to handle class imbalance between bald and non-bald datasets.
--   **Capability:** Detects signs of significant hair loss and baldness patterns.
-
-### 6. Nail Disease Model
+### 5. Nail Disease Model
 Target: **Onychology**
 -   **Methodology:** Multi-class classification using **EfficientNet-B4**.
 -   **Classes:** Detects 8 specific conditions:
@@ -150,7 +145,7 @@ Target: **Onychology**
 You can run the application as a standalone Windows executable (`.exe`) without needing Docker or Python installed on the target machine.
 
 ### Prerequisites (for building)
--   Python 3.10+
+-   Python 3.10+ (*recommended to use python 3.10 or 3.11 as the later models are incompatible with the dependencies used in this project* , *project built and tested on python 3.10.11*)
 -   Node.js (for building frontend) or Docker (to build frontend via container)
 
 ### How to Build & Run locally

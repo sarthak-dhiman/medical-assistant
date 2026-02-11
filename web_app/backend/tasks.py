@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from .celery_app import celery_app
 from .config import settings
+import mediapipe as mp
 
 import datetime
 
@@ -47,6 +48,114 @@ def encode_mask_b64(mask):
         return f"data:image/png;base64,{b64}"
     except Exception:
         return None
+
+# --- Hand Detection Helper ---
+# Lazy initialization of MediaPipe Hands
+mp_hands = None
+hands_detector = None
+
+def get_hand_detector():
+    global mp_hands, hands_detector
+    if hands_detector is None:
+        try:
+            mp_hands = mp.solutions.hands
+            hands_detector = mp_hands.Hands(
+                static_image_mode=True,
+                max_num_hands=1,
+                min_detection_confidence=0.5
+            )
+        except Exception as e:
+            logger.error(f"Failed to init MediaPipe Hands: {e}")
+            return None
+    return hands_detector
+
+def    detect_hand_and_crop(image):
+    """
+    Detects hand in the image and returns a crop of the hand region.
+    Falls back to center crop if no hand detected.
+    Returns: (crop_img, debug_info_dict, bbox_list)
+    """
+    try:
+        debug_info = {}
+        detector = get_hand_detector()
+        
+        if detector:
+            # Convert to RGB for MediaPipe
+            img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = detector.process(img_rgb)
+            
+            if results.multi_hand_landmarks:
+                # Get bounding box
+                h, w, _ = image.shape
+                landmarks = results.multi_hand_landmarks[0].landmark
+                
+                x_min, x_max = w, 0
+                y_min, y_max = h, 0
+                
+                for lm in landmarks:
+                    x, y = int(lm.x * w), int(lm.y * h)
+                    x_min = min(x_min, x)
+                    x_max = max(x_max, x)
+                    y_min = min(y_min, y)
+                    y_max = max(y_max, y)
+                
+                # Add padding (20%)
+                pad_x = int((x_max - x_min) * 0.2)
+                pad_y = int((y_max - y_min) * 0.2)
+                
+                x_min = max(0, x_min - pad_x)
+                x_max = min(w, x_max + pad_x)
+                y_min = max(0, y_min - pad_y)
+                y_max = min(h, y_max + pad_y)
+                
+                # Crop
+                crop = image[y_min:y_max, x_min:x_max]
+                
+                # Draw debug box on original image copy
+                debug_img = image.copy()
+                cv2.rectangle(debug_img, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                
+                # Encode debug image
+                success, buffer = cv2.imencode('.jpg', debug_img)
+                if success:
+                    debug_info["debug_image"] = "data:image/jpeg;base64," + base64.b64encode(buffer).decode('utf-8')
+                
+                debug_info["hand_detected"] = True
+                
+                # Return normalized bbox
+                bbox = [x_min/w, y_min/h, x_max/w, y_max/h]
+                return crop, debug_info, bbox
+                
+        # Fallback: Center Crop (50%)
+        h, w, _ = image.shape
+        cy, cx = h // 2, w // 2
+        crop_h, crop_w = h // 2, w // 2
+        
+        y1 = max(0, cy - crop_h // 2)
+        y2 = min(h, cy + crop_h // 2)
+        x1 = max(0, cx - crop_w // 2)
+        x2 = min(w, cx + crop_w // 2)
+        
+        crop = image[y1:y2, x1:x2]
+        
+        # Debug for fallback
+        debug_img = image.copy()
+        cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        success, buffer = cv2.imencode('.jpg', debug_img)
+        if success:
+            debug_info["debug_image"] = "data:image/jpeg;base64," + base64.b64encode(buffer).decode('utf-8')
+            
+        debug_info["hand_detected"] = False
+        debug_info["fallback"] = "Center Crop"
+        
+        # Return normalized bbox (None for fallback to avoid noise)
+        bbox = None # [x1/w, y1/h, x2/w, y2/h] 
+        return crop, debug_info, bbox
+        
+    except Exception as e:
+        logger.error(f"Hand detection failed: {e}")
+        # Return full image and full bbox as fail-safe
+        return image, {"error": str(e)}, [0.0, 0.0, 1.0, 1.0]
 
 def load_models():
     """Loads models once per worker process (Unified PyTorch Engine)."""
@@ -229,6 +338,10 @@ def predict_task(self, image_data_b64, mode, debug=False):
                   # Use inference service for prediction
                   label, conf, debug_info = inference_service.predict_jaundice_body(crop, debug=debug)
                   
+                  # Get recommendations
+                  recs = inference_service.get_recommendations(label)
+                  if recs: result["recommendations"] = recs
+                  
                   # Add Masks to debug_info
                   if "masks" not in debug_info: debug_info["masks"] = {}
                   debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
@@ -325,6 +438,10 @@ def predict_task(self, image_data_b64, mode, debug=False):
                 jaundice_eyes = [e for e in found_eyes if e["label"] == "Jaundice"]
                 result["confidence"] = max([e["confidence"] for e in jaundice_eyes])
                 result["debug_image"] = jaundice_eyes[0]["debug_image"]
+                
+                # Add recommendations for Jaundice
+                recs = inference_service.get_recommendations("Jaundice")
+                if recs: result["recommendations"] = recs
             else:
                 result["label"] = "Normal"
                 result["confidence"] = max([e["confidence"] for e in found_eyes])
@@ -348,6 +465,10 @@ def predict_task(self, image_data_b64, mode, debug=False):
                   
                   # Use inference service for prediction
                   label, conf, debug_info = inference_service.predict_skin_disease(crop, debug=debug)
+                  
+                  # Get recommendations
+                  recs = inference_service.get_recommendations(label)
+                  if recs: result["recommendations"] = recs
                   
                   if "masks" not in debug_info: debug_info["masks"] = {}
                   debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
@@ -384,6 +505,10 @@ def predict_task(self, image_data_b64, mode, debug=False):
                 label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
                 logger.info(f"🔥 BURNS INFERENCE RETURNED: {label}")
                 
+                # Get recommendations
+                recs = inference_service.get_recommendations(label)
+                if recs: result["recommendations"] = recs
+                
                 if "masks" not in debug_info: debug_info["masks"] = {}
                 debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
                 
@@ -406,13 +531,34 @@ def predict_task(self, image_data_b64, mode, debug=False):
 
     
     elif mode == "NAIL_DISEASE":
-        # Nail disease detection
-        label, conf, debug_info = inference_service.predict_nail_disease(frame, debug=debug)
-        result.update({
-            "label": label,
-            "confidence": float(conf),
-            "debug_info": debug_info
-        })
+        # Hand Segmentation & Cropping
+        crop, hand_debug_info, bbox = detect_hand_and_crop(frame)
+        
+        # Check if hand was actually detected
+        if not hand_debug_info.get("hand_detected", False):
+            result.update({
+                "label": "No Hand Detected",
+                "confidence": 0.0,
+                "bbox": None,
+                "debug_info": hand_debug_info
+            })
+        else:
+            # Nail disease detection on crop
+            label, conf, model_debug_info = inference_service.predict_nail_disease(crop, debug=debug)
+            
+            # Merge debug info
+            debug_info = {**hand_debug_info, **model_debug_info}
+            
+            # Get recommendations
+            recs = inference_service.get_recommendations(label)
+            if recs: result["recommendations"] = recs
+            
+            result.update({
+                "label": label,
+                "confidence": float(conf),
+                "bbox": bbox,
+                "debug_info": debug_info
+            })
     
 
 

@@ -35,6 +35,21 @@ if not exist "saved_models\onnx\jaundice_body.onnx" (
     pause
     exit /b 1
 )
+if not exist "saved_models\onnx\burns.onnx" (
+    echo Error: burns.onnx not found!
+    pause
+    exit /b 1
+)
+if not exist "saved_models\onnx\nail_disease.onnx" (
+    echo Error: nail_disease.onnx not found!
+    pause
+    exit /b 1
+)
+if not exist "saved_models\nail_disease_mapping.json" (
+    echo Error: nail_disease_mapping.json not found!
+    pause
+    exit /b 1
+)
 
 REM 6. Run PyInstaller
 echo.
@@ -45,6 +60,7 @@ python -m PyInstaller --noconfirm --onefile --windowed ^
     --add-data "web_app/frontend/dist;dist" ^
     --add-data "saved_models/onnx;models" ^
     --add-data "saved_models/skin_disease_mapping.json;models" ^
+    --add-data "saved_models/nail_disease_mapping.json;models" ^
     --hidden-import "inference" ^
     --hidden-import "onnxruntime" ^
     --hidden-import "cv2" ^

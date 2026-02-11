@@ -106,7 +106,7 @@ if __name__ == "__main__":
     MODEL_SAVE_PATH = Path("saved_models") / "jaundice_body_pytorch.pth"
     os.makedirs("saved_models", exist_ok=True)
     
-    print(f"🚀 Training on: {DEVICE}")
+    print(f"Training on: {DEVICE}")
     
     # Load data
     DATASET_ROOT = Path(r"D:\Disease Prediction\Dataset\baby_body_clean")
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     NORMAL_DIR = DATASET_ROOT / "normal"
     
     if not JAUNDICE_DIR.exists() or not NORMAL_DIR.exists():
-        print(f"❌ ERROR: Clean baby dataset not found at {DATASET_ROOT}")
+        print(f"ERROR: Clean baby dataset not found at {DATASET_ROOT}")
         print("Please run prepare_baby_dataset.py first!")
         sys.exit(1)
     
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     print(f"Found {len(jaundice_imgs)} Jaundice, {len(normal_imgs)} Normal images")
     
     if not jaundice_imgs or not normal_imgs:
-        print("❌ ERROR: Dataset not found!")
+        print("ERROR: Dataset not found!")
         sys.exit(1)
     
     # Create DataFrame
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     })
     
     # CRITICAL: Sorted Block Split (prevents video frame leakage)
-    print("⚠️ Using Sorted Block Split...")
+    print("Using Sorted Block Split...")
     
     df_jaundice = df[df["label"] == 1].sort_values("path").reset_index(drop=True)
     df_normal = df[df["label"] == 0].sort_values("path").reset_index(drop=True)
@@ -158,7 +158,7 @@ if __name__ == "__main__":
         df_normal.iloc[cut_n:]
     ]).reset_index(drop=True)
     
-    print(f"✅ Train: {len(train_df)}, Val: {len(val_df)}")
+    print(f"Train: {len(train_df)}, Val: {len(val_df)}")
     
     # Data loaders
     tf = transforms.Compose([
@@ -187,10 +187,10 @@ if __name__ == "__main__":
     capped_weight = min(raw_weight, 3.0)
     pos_weight = torch.tensor([capped_weight]).to(DEVICE)
     
-    print(f"\n⚖️ Class Weighting:")
-    print(f"   Jaundice: {jaundice_count} images")
-    print(f"   Normal:   {normal_count} images")
-    print(f"   Pos Weight: {pos_weight.item():.2f}")
+    print(f"\n Class Weighting:")
+    print(f"Jaundice: {jaundice_count} images")
+    print(f"Normal:   {normal_count} images")
+    print(f"Pos Weight: {pos_weight.item():.2f}")
     
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
@@ -247,13 +247,13 @@ if __name__ == "__main__":
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), MODEL_SAVE_PATH)
-            print(f"✅ Saved (Acc: {val_acc:.4f})")
+            print(f"Saved (Acc: {val_acc:.4f})")
             patience_counter = 0
         else:
             patience_counter += 1
         
         if patience_counter >= patience:
-            print(f"🛑 Early stopping")
+            print(f"Early stopping")
             break
     
     # Final evaluation
@@ -284,4 +284,4 @@ if __name__ == "__main__":
     print("\nClassification Report:")
     print(classification_report(all_labels, all_preds, target_names=['Normal', 'Jaundice']))
     
-    print(f"\n✅ Model saved to: {MODEL_SAVE_PATH}")
+    print(f"\nModel saved to: {MODEL_SAVE_PATH}")

@@ -17,7 +17,7 @@ def monitor_gpu():
         pynvml.nvmlInit()
         device_count = pynvml.nvmlDeviceGetCount()
         
-        logger.info(f"🚀 Starting GPU Monitoring for {device_count} device(s)...")
+        logger.info(f"🖥️ Starting GPU Monitoring for {device_count} device(s)...")
         
         while True:
             for i in range(device_count):
@@ -42,7 +42,7 @@ def monitor_gpu():
             time.sleep(10) # Log every 10 seconds
             
     except Exception as e:
-        logger.error(f"❌ GPU Monitor Error: {e}")
+        logger.error(f"🖥️ GPU Monitor Error: {e}")
     finally:
         try:
             pynvml.nvmlShutdown()

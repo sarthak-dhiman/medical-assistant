@@ -8,6 +8,7 @@ import sys
 import json
 import threading
 import base64
+from vis_utils import GradCAM, generate_heatmap_overlay
 
 # --- Configuration ---
 IMG_SIZE = (380, 380) # EfficientNet-B4 Native Resolution
@@ -135,16 +136,16 @@ def get_eye_model():
             return None
             
         try:
-            print("🔄 Loading Eye Model (Thread-Safe)...", flush=True)
+            print("Loading Eye Model (Thread-Safe)...", flush=True)
             model = JaundiceModel().to(get_device())
             state_dict = torch.load(path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _eye_model = model
-            print("✅ Eye Model Loaded (PyTorch)", flush=True)
+            print("Eye Model Loaded (PyTorch)", flush=True)
             return _eye_model
         except Exception as e:
-            print(f"❌ Failed to load Eye Model: {e}", flush=True)
+            print(f"Failed to load Eye Model: {e}", flush=True)
             return None
 
 def get_body_model():
@@ -170,10 +171,10 @@ def get_body_model():
             model.load_state_dict(state_dict)
             model.eval()
             _body_model = model
-            print("✅ Body Model Loaded (PyTorch)", flush=True)
+            print("Body Model Loaded (PyTorch)", flush=True)
             return _body_model
         except Exception as e:
-            print(f"❌ Failed to load Body Model: {e}", flush=True)
+            print(f"Failed to load Body Model: {e}", flush=True)
             return None
 
 def get_skin_model():
@@ -192,11 +193,11 @@ def get_skin_model():
         map_path = BASE_DIR / "saved_models" / "skin_disease_mapping.json"
         
         if not model_path.exists() or not map_path.exists(): 
-            print(f"⚠️ Skin model files missing: {model_path} or {map_path}", flush=True)
+            print(f"Skin model files missing: {model_path} or {map_path}", flush=True)
             return None
         
         try:
-            print("🔄 Loading Skin Model (Thread-Safe)...", flush=True)
+            print("Loading Skin Model (Thread-Safe)...", flush=True)
             # Load mapping first
             with open(map_path, 'r') as f:
                 raw_map = json.load(f)
@@ -221,10 +222,10 @@ def get_skin_model():
             model.load_state_dict(state_dict)
             model.eval()
             _skin_model = model
-            print(f"✅ Skin Model Loaded (PyTorch) - {num_classes} classes", flush=True)
+            print(f"Skin Model Loaded (PyTorch) - {num_classes} classes", flush=True)
             return _skin_model
         except Exception as e:
-            print(f"❌ Failed to load Skin Model: {e}", flush=True)
+            print(f"Failed to load Skin Model: {e}", flush=True)
             import traceback
             traceback.print_exc()
             return None
@@ -254,79 +255,7 @@ def _preprocess_img(img_bgr, size=(380,380)):
     
     return torch.tensor(img_batch, dtype=torch.float32).to(get_device())
 
-# --- GRAD-CAM UTILS ---
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.activations = None
-        
-        # Register hooks
-        # print(f"DEBUG: Registering hooks on {target_layer}", flush=True)
-        self.hook_a = target_layer.register_forward_hook(self.save_activation)
-        self.hook_g = target_layer.register_full_backward_hook(self.save_gradient)
-        
-    def save_activation(self, module, input, output):
-        # print(f"DEBUG: Activation captured. Shape: {output.shape}", flush=True)
-        self.activations = output
-        
-    def save_gradient(self, module, grad_input, grad_output):
-        # Gradients are typically tuple (grad_output,)
-        # print(f"DEBUG: Gradient captured. Shape: {grad_output[0].shape}", flush=True)
-        self.gradients = grad_output[0]
-        
-    def generate(self, class_idx=None):
-        if self.gradients is None or self.activations is None:
-            print("DEBUG: Grad-CAM failed - Missing gradients or activations", flush=True)
-            return None
-            
-        # Pool the gradients across the channels
-        pooled_gradients = torch.mean(self.gradients, dim=[0, 2, 3])
-        
-        # Get activations of the last conv layer
-        activations = self.activations.detach()
-        
-        # Weight the channels by corresponding gradients
-        for i in range(activations.size(1)):
-            activations[:, i, :, :] *= pooled_gradients[i]
-            
-        # Average the channels of the weighted activations
-        heatmap = torch.mean(activations, dim=1).squeeze()
-        
-        # ReLU on top
-        heatmap = np.maximum(heatmap.cpu().numpy(), 0)
-        
-        # Normalize
-        heatmap /= np.max(heatmap) + 1e-8
-        
-        return heatmap
-        
-    def remove_hooks(self):
-        self.hook_a.remove()
-        self.hook_g.remove()
-
-def generate_heatmap_overlay(heatmap, img_bgr):
-    """Overlays heatmap on original image."""
-    try:
-        h, w = img_bgr.shape[:2]
-        heatmap = cv2.resize(heatmap, (w, h))
-        
-        # Colorize
-        heatmap = np.uint8(255 * heatmap)
-        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-        
-        # Overlay
-        superimposed_img = heatmap * 0.4 + img_bgr * 0.6
-        superimposed_img = np.clip(superimposed_img, 0, 255).astype(np.uint8)
-        
-        # Encode
-        _, buffer = cv2.imencode('.jpg', superimposed_img)
-        b64 = base64.b64encode(buffer).decode('utf-8')
-        return f"data:image/jpeg;base64,{b64}"
-    except Exception as e:
-        print(f"Error generating heatmap: {e}")
-        return ""
+# GradCAM and generate_heatmap_overlay moved to vis_utils.py
 
 def predict_jaundice_eye(skin_img, sclera_crop=None, debug=False):
     model = get_eye_model()
@@ -395,17 +324,15 @@ def predict_jaundice_eye(skin_img, sclera_crop=None, debug=False):
                      debug_info["grad_cam"] = overlay
                      
     except torch.cuda.OutOfMemoryError:
-        print("❌ CRITICAL: GPU Out Of Memory in Jaundice Eye Inference!", flush=True)
+        print("CRITICAL: GPU Out Of Memory in Jaundice Eye Inference!", flush=True)
         return "GPU_OOM", 0.0, {"status": "oom_error"}
     except Exception as e:
-        print(f"❌ Inference Error: {e}", flush=True)
+        print(f"Inference Error: {e}", flush=True)
         return "Error", 0.0, {}
     finally:
         if grad_cam:
             grad_cam.remove_hooks()
             model.zero_grad() # Cleanup
-    
-    # Standard threshold after retraining with balanced data
     
     # Standard threshold after retraining with balanced data
     threshold = 0.5
@@ -478,10 +405,10 @@ def predict_jaundice_body(img_bgr, debug=False):
                      debug_info["grad_cam"] = overlay
                      
     except torch.cuda.OutOfMemoryError:
-        print("❌ CRITICAL: GPU Out Of Memory in Jaundice Body Inference!", flush=True)
+        print("CRITICAL: GPU Out Of Memory in Jaundice Body Inference!", flush=True)
         return "GPU_OOM", 0.0, {"status": "oom_error"}
     except Exception as e:
-        print(f"❌ Inference Error: {e}", flush=True)
+        print(f"Inference Error: {e}", flush=True)
         return "Error", 0.0, {}
     finally:
         if grad_cam:

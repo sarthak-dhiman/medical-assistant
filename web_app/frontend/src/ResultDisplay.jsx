@@ -5,7 +5,13 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
     if (isNerdMode && result) {
         console.log("🤓 Nerd Mode Data:", result.debug_info, "Mode:", mode);
     }
-    const [viewMode, setViewMode] = useState('MASKS'); // 'MASKS' or 'HEATMAP'
+    const [viewMode, setViewMode] = useState(() => {
+        // Auto-select HEATMAP if no masks but grad_cam exists (e.g. Nail/Burns)
+        if (result?.debug_info?.grad_cam && !result?.debug_info?.masks) {
+            return 'HEATMAP';
+        }
+        return 'MASKS';
+    });
     if (!result) return null;
 
     if (result.status === 'error') {

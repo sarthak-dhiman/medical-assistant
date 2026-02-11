@@ -5,6 +5,7 @@ Encapsulates all ML inference logic, separating it from Celery task orchestratio
 import sys
 from pathlib import Path
 import logging
+import json
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -104,6 +105,50 @@ class InferenceService:
         except Exception as e:
             logger.error(f"Nail Disease inference failed: {e}")
             return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
+    def get_recommendations(label):
+        """
+        Fetch recommendations and explanations from the knowledge base.
+        
+        Args:
+            label: The detected disease label.
+            
+        Returns:
+            dict: Recommendations, causes, and description.
+        """
+        kb_path = Path(__file__).resolve().parent / "knowledge_base.json"
+        
+        # Mapping variations to knowledge base keys
+        label_mapping = {
+            "Burns Detected": "Burns Detected",
+            "Jaundice": "Jaundice",
+            "Acne": "Acne",
+            "Atopic_Dermatitis": "Atopic_Dermatitis",
+            "Psoriasis": "Psoriasis",
+            "Rosacea": "Rosacea",
+            "SkinCancer": "SkinCancer",
+            "Tinea_Fungal": "Tinea_Fungal",
+            "Urticaria_Hives": "Urticaria_Hives",
+            "Vitiligo": "Vitiligo",
+            "Warts": "Warts",
+            "Onychomycosis": "Onychomycosis",
+            "Nail_Psoriasis": "Nail Psoriasis",
+            "Pitting": "Pitting"
+        }
+        
+        clean_label = label.replace(" ", "_")
+        kb_key = label_mapping.get(label) or label_mapping.get(clean_label) or label
+        
+        try:
+            if kb_path.exists():
+                with open(kb_path, 'r') as f:
+                    kb = json.load(f)
+                return kb.get(kb_key)
+        except Exception as e:
+            logger.error(f"Failed to load knowledge base: {e}")
+            
+        return None
     
 
 

@@ -20,6 +20,8 @@ services:
       - ./web_app/backend:/app/web_app/backend # Dev code sync
       - ./segformer_utils.py:/app/segformer_utils.py # Mount root files
       - ./inference_pytorch.py:/app/inference_pytorch.py
+      - ./inference_new_models.py:/app/inference_new_models.py
+      - ./vis_utils.py:/app/vis_utils.py
     environment:
       - REDIS_URL=redis://redis:6379/0
       # Security: Allow frontend access
@@ -27,7 +29,7 @@ services:
       # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - TZ=Asia/Kolkata
+      - TZ=${TZ:-UTC}
     deploy:
       resources:
         limits:
@@ -59,6 +61,8 @@ services:
       - ./saved_models:/app/saved_models
       - ./segformer_utils.py:/app/segformer_utils.py
       - ./inference_pytorch.py:/app/inference_pytorch.py
+      - ./inference_new_models.py:/app/inference_new_models.py
+      - ./vis_utils.py:/app/vis_utils.py
       - hf_cache:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379/0
@@ -66,7 +70,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - OMP_NUM_THREADS=4
-      - TZ=Asia/Kolkata
+      - TZ=${TZ:-UTC}
     deploy:
       resources:
         limits:
@@ -92,7 +96,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - FLOWER_BASIC_AUTH=admin:${FLOWER_PASSWORD:-changeme123}
-      - TZ=Asia/Kolkata
+      - TZ=${TZ:-UTC}
     depends_on:
       - redis
     networks:
@@ -107,7 +111,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - TZ=Asia/Kolkata
+      - TZ=${TZ:-UTC}
     deploy:
       resources:
         reservations:

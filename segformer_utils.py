@@ -56,14 +56,14 @@ class SegFormerWrapper:
                 self.model.to(self.device)
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
-                    print("⚠️ GPU Out of Memory! Falling back to CPU for SegFormer...")
+                    print("GPU Out of Memory! Falling back to CPU for SegFormer...")
                     self.device = "cpu"
                     self.model.to("cpu")
                     torch.cuda.empty_cache()
                 else:
                     raise e
             
-            print(f"✅ SegFormer loaded successfully on {self.device}")
+            print(f"SegFormer loaded successfully on {self.device}")
             
             # Standard Face Parsing Labels (BiSeNet/CelebAMask-HQ convention)
             # 0: background
@@ -90,17 +90,17 @@ class SegFormerWrapper:
             }
             
         except ImportError as e:
-            print(f"❌ IMPORT ERROR Loading SegFormer: {e}")
+            print(f"IMPORT ERROR Loading SegFormer: {e}")
             print(f"   This usually means 'transformers' library is missing or incompatible.")
-            print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
+            print("SegFormer is DISABLED. Skin/Jaundice detection will fail.")
             self.model = None
         except RuntimeError as e:
-            print(f"❌ RUNTIME ERROR Loading SegFormer: {e}")
+            print(f"RUNTIME ERROR Loading SegFormer: {e}")
             print(f"   This could be a CUDA/memory issue or model file corruption.")
-            print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
+            print("SegFormer is DISABLED. Skin/Jaundice detection will fail.")
             self.model = None
         except Exception as e:
-            print(f"❌ UNEXPECTED ERROR Loading SegFormer: {type(e).__name__}: {e}")
+            print(f"UNEXPECTED ERROR Loading SegFormer: {type(e).__name__}: {e}")
             print(f"   Full traceback:")
             import traceback
             traceback.print_exc()
@@ -119,7 +119,7 @@ class SegFormerWrapper:
             except:
                 pass
 
-            print("⚠️ SegFormer is DISABLED. Skin/Jaundice detection will fail.")
+            print("SegFormer is DISABLED. Skin/Jaundice detection will fail.")
             self.model = None
     
 
@@ -133,7 +133,7 @@ class SegFormerWrapper:
         Returns class mask (H, W).
         """
         if self.model is None:
-            print("⚠️ SegFormer Predict called but model is None!")
+            print("SegFormer Predict called but model is None!")
             # Return an empty mask if the model failed to load
             if isinstance(image, np.ndarray):
                 return np.zeros(image.shape[:2], dtype=np.uint8)
@@ -423,9 +423,9 @@ class SegFormerWrapper:
                 refine_landmarks=True, # Critical for Iris landmarks
                 min_detection_confidence=0.5
             )
-            print("✅ MediaPipe Face Mesh initialized.")
+            print("MediaPipe Face Mesh initialized.")
         except ImportError:
-            print("❌ MediaPipe not installed. Falling back to SegFormer/Hough.")
+            print("MediaPipe not installed. Falling back to SegFormer/Hough.")
             self.face_mesh = None
 
     def get_eyes_mediapipe(self, image_bgr):
@@ -532,6 +532,6 @@ class SegFormerWrapper:
             return np.zeros(image_bgr.shape[:2], dtype=np.uint8)
 
         except Exception as e:
-            print(f"❌ MediaPipe Selfie Segmentation Failed: {e}")
+            print(f"MediaPipe Selfie Segmentation Failed: {e}")
             # Fallback: Return all ones (assume whole image is person) so strict color filter handles it
             return np.ones(image_bgr.shape[:2], dtype=np.uint8) * 255

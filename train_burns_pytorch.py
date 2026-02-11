@@ -36,7 +36,7 @@ DATASET_ROOT = Path("Dataset/Burns_Skin")
 OUTPUT_DIR = Path("saved_models")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-print(f"🔥 Burns Detection Training")
+print(f"Burns Detection Training")
 print(f"Device: {DEVICE}")
 print(f"Dataset: {DATASET_ROOT}")
 
@@ -97,9 +97,9 @@ def load_dataset():
     burn_images = list(burn_dir.glob("*.jpg")) + list(burn_dir.glob("*.png"))
     healthy_images = list(healthy_dir.glob("*.jpg")) + list(healthy_dir.glob("*.png"))
     
-    print(f"📊 Dataset Statistics:")
-    print(f"  Burn images: {len(burn_images)}")
-    print(f"  Healthy images: {len(healthy_images)}")
+    print(f"Dataset Statistics:")
+    print(f"Burn images: {len(burn_images)}")
+    print(f"Healthy images: {len(healthy_images)}")
     
     # Create labels (0 = healthy, 1 = burn)
     all_images = healthy_images + burn_images
@@ -114,7 +114,7 @@ def load_dataset():
         temp_imgs, temp_labels, test_size=0.33, stratify=temp_labels, random_state=42
     )
     
-    print(f"  Train: {len(train_imgs)} | Val: {len(val_imgs)} | Test: {len(test_imgs)}")
+    print(f"Train: {len(train_imgs)} | Val: {len(val_imgs)} | Test: {len(test_imgs)}")
     
     return (train_imgs, train_labels), (val_imgs, val_labels), (test_imgs, test_labels)
 
@@ -196,7 +196,7 @@ def main():
     num_healthy = sum(1 for l in train_labels if l == 0)
     num_burn = sum(1 for l in train_labels if l == 1)
     pos_weight = torch.tensor([num_healthy / num_burn]).to(DEVICE)
-    print(f"📊 Class Weight (Burn): {pos_weight.item():.2f}")
+    print(f"Class Weight (Burn): {pos_weight.item():.2f}")
     
     # Create datasets
     train_dataset = BurnsDataset(train_imgs, train_labels, get_transforms(True))
@@ -219,7 +219,7 @@ def main():
     patience_counter = 0
     
     for epoch in range(EPOCHS):
-        print(f"\n📍 Epoch {epoch+1}/{EPOCHS}")
+        print(f"\nEpoch {epoch+1}/{EPOCHS}")
         
         train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, DEVICE, ACCUM_STEPS)
         val_loss, val_acc = validate(model, val_loader, criterion, DEVICE)
@@ -232,18 +232,18 @@ def main():
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(model.state_dict(), OUTPUT_DIR / "burns_pytorch.pth")
-            print(f"✅ Saved best model (Val Acc: {val_acc:.4f})")
+            print(f"Saved best model (Val Acc: {val_acc:.4f})")
             patience_counter = 0
         else:
             patience_counter += 1
         
         # Early stopping
         if patience_counter >= PATIENCE:
-            print(f"⏹️ Early stopping triggered after {epoch+1} epochs")
+            print(f"Early stopping triggered after {epoch+1} epochs")
             break
     
     # Test evaluation
-    print("\n🧪 Testing on held-out test set...")
+    print("\nTesting on held-out test set...")
     model.load_state_dict(torch.load(OUTPUT_DIR / "burns_pytorch.pth"))
     test_loss, test_acc = validate(model, test_loader, criterion, DEVICE)
     print(f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
@@ -262,7 +262,7 @@ def main():
     with open(OUTPUT_DIR / "burns_metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"\n🎉 Training Complete!")
+    print(f"\nTraining Complete!")
     print(f"Best Val Accuracy: {best_val_acc:.4f}")
     print(f"Test Accuracy: {test_acc:.4f}")
 

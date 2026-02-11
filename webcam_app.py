@@ -16,6 +16,7 @@ try:
     
     # 3. PyTorch Model for SKIN DISEASES (Replaces Keras)
     from inference_pytorch import predict_skin_disease_torch
+    from inference_new_models import predict_burns, predict_nail_disease
     
     from segformer_utils import SegFormerWrapper
     MODELS_LOADED = True
@@ -41,6 +42,8 @@ except ImportError as e:
     def predict_jaundice_torch(skin, sclera=None): return "DUMMY: Jaundice", 0.0
     def predict_jaundice_body_torch(img): return "DUMMY: Jaundice", 0.0
     def predict_skin_disease_torch(img): return "DUMMY: Skin Disease", 0.0
+    def predict_burns(img): return "DUMMY: Burns", 0.0
+    def predict_nail_disease(img): return "DUMMY: Nail Disease", 0.0
 
 # --- 2. HELPER FUNCTIONS ---
 def get_manual_skin_mask(img):
@@ -156,8 +159,8 @@ def main():
     # cap.set(3, 1280) 
     # cap.set(4, 720) # High res might slow down segmentation
 
-    # Mode Cycle: Jaundice Body -> Jaundice Eye -> Skin Disease
-    modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]
+    # Mode Cycle: Jaundice Body -> Jaundice Eye -> Skin Disease -> Nail Disease -> Burns
+    modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "NAIL_DISEASE", "BURNS"]
     mode_idx = 0
     
     sidebar_width = 300
@@ -354,6 +357,53 @@ def main():
                 if using_fallback:
                      cx, cy = w//2, h//2
                      cv2.rectangle(frame, (cx-100, cy-100), (cx+100, cy+100), (255, 255, 0), 2)
+
+
+        # --- MODE 4: NAIL DISEASE ---
+        elif current_model == "NAIL_DISEASE":
+            # For nails, we usually don't have a reliable segformer class, 
+            # so we'll look for skin or use the center of the frame as a guide.
+            if cv2.countNonZero(final_skin_mask) > (threshold/2):
+                masked_roi = cv2.bitwise_and(frame, frame, mask=final_skin_mask)
+                y_indices, x_indices = np.where(final_skin_mask > 0)
+                if len(y_indices) > 0:
+                    y_min, y_max = np.min(y_indices), np.max(y_indices)
+                    x_min, x_max = np.min(x_indices), np.max(x_indices)
+                    
+                    cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
+                    
+                    if cropped_skin.size > 0:
+                        label, conf, _ = predict_nail_disease(cropped_skin)
+                        color = (0, 255, 0) if "Healthy" in label else (0, 0, 255)
+                        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, 2)
+                        sidebar_result = label
+                        sidebar_conf = f"Conf: {conf*100:.1f}%"
+            else:
+                sidebar_warning = "Focus on Nails/Fingers"
+                cx, cy = w//2, h//2
+                cv2.rectangle(frame, (cx-100, cy-100), (cx+100, cy+100), (255, 255, 0), 2)
+
+        # --- MODE 5: BURNS ---
+        elif current_model == "BURNS":
+            if cv2.countNonZero(final_skin_mask) > (threshold/2):
+                masked_roi = cv2.bitwise_and(frame, frame, mask=final_skin_mask)
+                y_indices, x_indices = np.where(final_skin_mask > 0)
+                if len(y_indices) > 0:
+                    y_min, y_max = np.min(y_indices), np.max(y_indices)
+                    x_min, x_max = np.min(x_indices), np.max(x_indices)
+                    
+                    cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
+                    
+                    if cropped_skin.size > 0:
+                        label, conf, _ = predict_burns(cropped_skin)
+                        color = (0, 255, 0) if "Healthy" in label else (0, 0, 255)
+                        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, 2)
+                        sidebar_result = label
+                        sidebar_conf = f"Conf: {conf*100:.1f}%"
+            else:
+                sidebar_warning = "Focus on Burn Area"
+                cx, cy = w//2, h//2
+                cv2.rectangle(frame, (cx-100, cy-100), (cx+100, cy+100), (255, 255, 0), 2)
 
 
         # --- DRAW FINAL UI ---

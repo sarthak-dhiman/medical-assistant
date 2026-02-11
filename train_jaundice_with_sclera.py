@@ -316,20 +316,20 @@ def train_model(jaundice_root: Path = DEFAULT_JAUNDICE_ROOT, normal_root: Path =
             best_val_loss = val_loss
             patience_counter = 0
             best_model_wts = copy.deepcopy(model.state_dict())
-            print(f"✅ New best model! Val Loss: {val_loss:.4f}")
+            print(f"New best model! Val Loss: {val_loss:.4f}")
         else:
             patience_counter += 1
-            print(f"⚠️ No improvement. Patience: {patience_counter}/{PATIENCE}")
+            print(f"No improvement. Patience: {patience_counter}/{PATIENCE}")
             
             if patience_counter >= PATIENCE:
-                print(f"\n🛑 Early stopping triggered at epoch {epoch+1}")
+                print(f"\n Early stopping triggered at epoch {epoch+1}")
                 break
     
     # 6. Save Best Model
     if best_model_wts:
         model.load_state_dict(best_model_wts)
         torch.save(best_model_wts, MODEL_SAVE_PATH)
-        print(f"\n✅ Best model saved to {MODEL_SAVE_PATH}")
+        print(f"\nBest model saved to {MODEL_SAVE_PATH}")
     
     # 7. Final Evaluation
     print("\n" + "="*60)

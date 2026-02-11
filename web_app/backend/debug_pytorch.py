@@ -15,12 +15,12 @@ try:
     model = get_model()
     
     if model:
-        print("✅ PyTorch Model Loaded Successfully.")
+        print("🛫 PyTorch Model Loaded Successfully.")
     else:
-        print("❌ PyTorch Model returned None.")
+        print("🛬 PyTorch Model returned None.")
         
 except Exception as e:
-    print(f"❌ PyTorch Critical Failure: {e}")
+    print(f"🛬 PyTorch Critical Failure: {e}")
     import traceback
     traceback.print_exc()
 

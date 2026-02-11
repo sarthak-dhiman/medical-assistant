@@ -10,9 +10,10 @@ from pathlib import Path
 # To avoid import issues with relative paths if running as script, we'll just redefine/import carefully.
 try:
     from inference_pytorch import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
+    from inference_new_models import BurnsModel, NailDiseaseModel
 except ImportError:
     # Fallback: redefine if inference_pytorch isn't in path
-    print("WARNING: Could not import architectures from inference_pytorch. Using local definitions.")
+    print("WARNING: Could not import architectures. Ensure inference scripts are in path.")
     exit(1)
 
 # Force CPU for export to avoid VRAM conflict with training
@@ -48,7 +49,7 @@ def export_body_model():
         output_names=['output'],
         dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
     )
-    print(f"✅ Exported to {output_path}")
+    print(f"Exported to {output_path}")
 
 def export_eye_model():
     print("--- Exporting Jaundice Eye Model ---")
@@ -83,7 +84,7 @@ def export_eye_model():
             'output': {0: 'batch_size'}
         }
     )
-    print(f"✅ Exported to {output_path}")
+    print(f"Exported to {output_path}")
 
 def export_skin_model():
     print("--- Exporting Skin Disease Model ---")
@@ -117,11 +118,73 @@ def export_skin_model():
         output_names=['output'],
         dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
     )
-    print(f"✅ Exported to {output_path}")
+    print(f"Exported to {output_path}")
+
+def export_burns_model():
+    print("--- Exporting Burns Model ---")
+    path = Path("saved_models/burns_pytorch.pth")
+    if not path.exists():
+        print(f"Skipping Burns: {path} not found")
+        return
+
+    model = BurnsModel().to(DEVICE)
+    model.load_state_dict(torch.load(path, map_location=DEVICE))
+    model.eval()
+
+    dummy_input = torch.randn(1, 3, 380, 380).to(DEVICE)
+    
+    output_path = SAVE_DIR / "burns.onnx"
+    torch.onnx.export(
+        model, 
+        dummy_input, 
+        output_path,
+        export_params=True,
+        opset_version=14,
+        do_constant_folding=True,
+        input_names=['input'],
+        output_names=['output'],
+        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+    )
+    print(f"Exported to {output_path}")
+
+def export_nail_model():
+    print("--- Exporting Nail Disease Model ---")
+    path = Path("saved_models/nail_disease_pytorch.pth")
+    map_path = Path("saved_models/nail_disease_mapping.json")
+    
+    if not path.exists() or not map_path.exists():
+        print(f"Skipping Nail: Files not found")
+        return
+
+    with open(map_path, 'r') as f:
+        mapping = json.load(f)
+        num_classes = len(mapping)
+
+    model = NailDiseaseModel(num_classes=num_classes).to(DEVICE)
+    model.load_state_dict(torch.load(path, map_location=DEVICE))
+    model.eval()
+
+    dummy_input = torch.randn(1, 3, 380, 380).to(DEVICE)
+    
+    output_path = SAVE_DIR / "nail_disease.onnx"
+    torch.onnx.export(
+        model, 
+        dummy_input, 
+        output_path,
+        export_params=True,
+        opset_version=14,
+        do_constant_folding=True,
+        input_names=['input'],
+        output_names=['output'],
+        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+    )
+    print(f"Exported to {output_path}")
 
 if __name__ == "__main__":
     print(f"Exporting on device: {DEVICE}")
     export_body_model()
     export_eye_model()
     export_skin_model()
+    export_burns_model()
+    export_nail_model()
     print("Done!")

@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react'
 import Webcam from 'react-webcam'
 import axios from 'axios'
 import ResultDisplay from './ResultDisplay'
-import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle } from 'lucide-react'
+import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon } from 'lucide-react'
 
 const API_URL = "" // Relative path (proxied by Nginx)
 
@@ -14,10 +14,17 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const [fps, setFps] = useState(0)
     const [facingMode, setFacingMode] = useState("user")
     const [isGPUFull, setIsGPUFull] = useState(false)
+    const [showRecs, setShowRecs] = useState(false)
 
     // Ref to track the *current* active mode for avoiding stale responses
     const latestModeRef = useRef(mode)
-    useEffect(() => { latestModeRef.current = mode }, [mode])
+    useEffect(() => {
+        latestModeRef.current = mode;
+        // RESET STATE ON MODE SWITCH
+        setResult(null);
+        setError(null);
+        setIsProcessing(false);
+    }, [mode])
 
     // Toggle Camera Callback
     const toggleCamera = useCallback(() => {
@@ -322,12 +329,22 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 {/* Instructions Removed (Moved to Sidebar) */}
 
                 {/* Mode Indicator & Instructions */}
-                <div className="absolute bottom-6 left-6 transition-all duration-300">
+                <div className="absolute bottom-20 sm:bottom-6 left-4 right-4 sm:left-6 sm:right-auto transition-all duration-300 pointer-events-auto flex justify-center sm:block">
                     {result && (
-                        <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 max-w-sm shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1">AI Diagnosis</p>
+                        <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full sm:w-auto sm:max-w-sm shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className="flex justify-between items-start mb-1">
+                                <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">AI Diagnosis</p>
+                                {result.recommendations && (
+                                    <button
+                                        onClick={() => setShowRecs(true)}
+                                        className="flex items-center gap-1 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition-colors"
+                                    >
+                                        LEARN MORE <ChevronRight className="w-3 h-3" />
+                                    </button>
+                                )}
+                            </div>
                             <div className="flex items-center justify-between gap-4">
-                                <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
+                                <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease') || (result.label || '').includes('Burns')
                                     ? 'text-red-400' : 'text-green-400'
                                     }`}>
                                     {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}
@@ -340,6 +357,78 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                     )}
                 </div>
             </div>
+
+            {/* Recommendations Modal */}
+            {showRecs && result?.recommendations && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
+                    <div className="bg-gray-900 border border-white/10 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
+                        {/* Modal Header */}
+                        <div className="p-6 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent">
+                            <div className="flex items-center gap-3">
+                                <div className="p-3 bg-blue-600/20 rounded-2xl text-blue-400">
+                                    <Info className="w-6 h-6" />
+                                </div>
+                                <div>
+                                    <h2 className="text-2xl font-black text-white tracking-tight">Condition Details</h2>
+                                    <p className="text-blue-400 font-bold text-xs uppercase tracking-widest">{result.label}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowRecs(false)}
+                                className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all"
+                            >
+                                <CloseIcon className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                            {/* Description */}
+                            <section>
+                                <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                    <div className="w-1 h-3 bg-blue-500 rounded-full" /> Overview
+                                </h3>
+                                <p className="text-gray-300 leading-relaxed">{result.recommendations.description}</p>
+                            </section>
+
+                            {/* Causes */}
+                            {result.recommendations.causes && (
+                                <section className="bg-white/5 rounded-2xl p-4 border border-white/5">
+                                    <h3 className="text-xs font-black text-blue-400 uppercase tracking-widest mb-2">Common Causes</h3>
+                                    <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.causes}</p>
+                                </section>
+                            )}
+
+                            {/* Care & Recommendations */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <section className="bg-green-500/5 rounded-2xl p-4 border border-green-500/10">
+                                    <h3 className="text-xs font-black text-green-400 uppercase tracking-widest mb-2">Care Tips</h3>
+                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.care}</p>
+                                </section>
+                                <section className="bg-cyan-500/5 rounded-2xl p-4 border border-cyan-500/10">
+                                    <h3 className="text-xs font-black text-cyan-400 uppercase tracking-widest mb-2">AI Guidance</h3>
+                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.recommendations}</p>
+                                </section>
+                            </div>
+
+                            {/* Disclaimer */}
+                            <p className="text-[10px] text-gray-500 italic text-center pt-4 border-t border-white/5">
+                                This information is for educational purposes only and not a substitute for professional medical advice.
+                            </p>
+                        </div>
+
+                        {/* Close Button */}
+                        <div className="p-6 bg-gray-950/50 border-t border-white/10">
+                            <button
+                                onClick={() => setShowRecs(false)}
+                                className="w-full py-4 bg-white text-black font-black rounded-2xl hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-widest text-xs"
+                            >
+                                Close Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

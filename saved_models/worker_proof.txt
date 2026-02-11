@@ -1,3 +1,0 @@
-Worker Init Started at 2026-02-11 05:23:37.476894
-CWD: /app
-Content: ['burns_pytorch.pth', 'hairloss_pytorch.pth', 'jaundice_body_pytorch.pth', 'jaundice_with_sclera_torch.pth', 'onnx', 'segformer', 'skin_disease_mapping.json', 'skin_disease_pytorch.pth', 'worker_proof.txt']

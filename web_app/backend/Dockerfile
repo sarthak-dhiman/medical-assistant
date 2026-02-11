@@ -26,6 +26,7 @@ ENV CACHEBUST=2
 COPY segformer_utils.py .
 COPY inference_pytorch.py .
 COPY inference_new_models.py .
+COPY vis_utils.py .
 # COPY saved_models/ ./saved_models/ # We will mount this via Volume for speed
 
 # Copy Backend Code

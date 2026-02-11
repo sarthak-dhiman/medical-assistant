@@ -25,7 +25,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+MedicalAssistant.spec
+MedicalAssistant.exe
 # Jupyter Notebook
 .ipynb_checkpoints
 

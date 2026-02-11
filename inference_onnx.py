@@ -24,17 +24,17 @@ _skin_classes = {}
 def get_ort_session(model_name):
     path = BASE_DIR / "saved_models" / "onnx" / f"{model_name}.onnx"
     if not path.exists():
-        print(f"❌ ONNX Model missing: {path}")
+        print(f"ONNX Model missing: {path}")
         return None
     
     try:
         # Prefer CUDA, fallback to CPU
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
         sess = ort.InferenceSession(str(path), providers=providers)
-        print(f"✅ Loaded {model_name} (Providers: {sess.get_providers()})")
+        print(f"Loaded {model_name} (Providers: {sess.get_providers()})")
         return sess
     except Exception as e:
-        print(f"❌ Failed to load {model_name}: {e}")
+        print(f"Failed to load {model_name}: {e}")
         return None
 
 def get_body_session():
