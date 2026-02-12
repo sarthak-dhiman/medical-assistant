@@ -82,5 +82,47 @@
         "causes": "Often associated with skin conditions like psoriasis or eczema.",
         "care": "Treatment is usually directed at the underlying condition.",
         "recommendations": "Regular moisturizing of the nail bed may help."
+    },
+    "Healthy Nail": {
+        "description": "Your nails appear healthy with no visible signs of disease.",
+        "causes": "N/A",
+        "care": "Continue good nail hygiene. Keep nails clean and dry.",
+        "recommendations": "Maintain a balanced diet rich in biotin and protein for strong nails."
+    },
+    "Healthy Skin": {
+        "description": "Your skin appears healthy with no visible signs of burns or disease.",
+        "causes": "N/A",
+        "care": "Continue your daily skincare routine. Use sunscreen.",
+        "recommendations": "Stay hydrated and protect your skin from excessive sun exposure."
+    },
+    "Clubbing": {
+        "description": "Changes in the areas under and around the toenails and fingernails that makes them look like the upside-down part of a spoon.",
+        "causes": "Low oxygen in the blood, lung disease, or heart defects.",
+        "care": "Treatment depends on the underlying cause.",
+        "recommendations": "Consult a doctor as this can be a sign of a serious underlying condition."
+    },
+    "Blue_Finger": {
+        "description": "A bluish or purplish discoloration of the fingers.",
+        "causes": "Poor circulation, cold temperatures, or low oxygen levels.",
+        "care": "Keep hands warm. Massage to improve circulation.",
+        "recommendations": "Seek medical attention if discoloration persists or is accompanied by pain."
+    },
+    "Onychogryphosis": {
+        "description": "A nail disease that causes one side of the nail to grow faster than the other.",
+        "causes": "Trauma, peripheral vascular disease, or neglect.",
+        "care": "Regular trimming and filing by a podiatrist.",
+        "recommendations": "Keep nails short and wear comfortable shoes."
+    },
+    "Acral_Lentiginous_Melanoma": {
+        "description": "A type of melanoma that appears on the palms, soles, or under the nails.",
+        "causes": "Genetic factors; not strictly related to sun exposure.",
+        "care": "Requires immediate medical attention.",
+        "recommendations": "See a dermatologist immediately for a biopsy and treatment plan."
+    },
+    "No Hand Detected": {
+        "description": "The AI could not find a clear hand in the image.",
+        "causes": "Poor lighting, camera angle, or hand being partially obscured.",
+        "care": "Please ensure your hand is fully visible and clearly positioned in front of the camera.",
+        "recommendations": "Try moving your hand slowly or improving the room lighting for better detection."
     }
 }

@@ -61,6 +61,7 @@ services:
     command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1
     volumes:
       - ./saved_models:/app/saved_models
+      - ./web_app/backend:/app/web_app/backend # Dev code sync (IMPORTANT!)
       - ./segformer_utils.py:/app/segformer_utils.py
       - ./inference_pytorch.py:/app/inference_pytorch.py
       - ./inference_new_models.py:/app/inference_new_models.py

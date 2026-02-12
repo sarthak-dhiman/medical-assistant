@@ -177,7 +177,7 @@ function App() {
       </main>
 
       {/* MOBILE/TABLET BOTTOM NAVIGATION (DROP UP) */}
-      <div className="lg:hidden fixed bottom-6 md:bottom-8 left-4 right-4 z-[50] flex flex-col justify-end pointer-events-none gap-3 pb-[env(safe-area-inset-bottom)]">
+      <div className="lg:hidden fixed bottom-4 md:bottom-6 left-4 right-4 z-[50] flex flex-col justify-end pointer-events-none gap-3 pb-[env(safe-area-inset-bottom)]">
 
         {/* Drop Up Menu */}
         {showModeMenu && (

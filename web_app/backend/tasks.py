@@ -254,7 +254,7 @@ def predict_task(self, image_data_b64, mode, debug=False):
         if not image_data_b64 or not isinstance(image_data_b64, str):
             return {"status": "error", "error": "Invalid or missing image data"}
         
-        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             return {"status": "error", "error": f"Invalid mode: {mode}"}
         
         # Decode Image with comprehensive error handling
@@ -596,43 +596,33 @@ def _process_burns(frame, skin_mask, w, h, debug, result):
 
 
 def _process_nail_disease(frame, skin_mask, w, h, debug, result):
-    """Process nail disease detection."""
+    """Process nail disease detection with hand detection first."""
     try:
-        if cv2.countNonZero(skin_mask) > 100:
-            y, x = np.where(skin_mask > 0)
-            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
-            
-            # Crop from ORIGINAL frame to preserve BGR channels
-            crop = frame[y0:y1, x0:x1]
-            
-            # Ensure it's 3-channel BGR
-            if len(crop.shape) == 2:
-                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-            elif crop.shape[2] != 3:
-                crop = crop[:, :, :3]
-            
-            # Use inference service for prediction
-            label, conf, debug_info = inference_service.predict_nail_disease(crop, debug=debug)
-            
-            if "masks" not in debug_info: debug_info["masks"] = {}
-            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-            
+        # 1. Detect Hand
+        hand_crop, hand_debug, hand_bbox = detect_hand_and_crop(frame)
+        
+        if not hand_debug.get("hand_detected", False):
             result.update({
-                "label": label, 
-                "confidence": float(conf), 
-                "bbox": [x0/w, y0/h, x1/w, y1/h],
-                "debug_info": debug_info
-            })
-        else:
-            debug_info = {}
-            if "masks" not in debug_info: debug_info["masks"] = {}
-            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
-            result.update({
-                "label": "No Skin", 
+                "label": "No Hand Detected",
                 "confidence": 0.0,
-                "debug_info": debug_info
+                "debug_info": hand_debug
             })
-            
+            return result
+
+        # 2. Use hand crop for prediction
+        label, conf, debug_info = inference_service.predict_nail_disease(hand_crop, debug=debug)
+        
+        # Merge debug infos
+        final_debug = {**hand_debug, **debug_info}
+        if "masks" not in final_debug: final_debug["masks"] = {}
+        final_debug["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+        
+        result.update({
+            "label": label, 
+            "confidence": float(conf), 
+            "bbox": hand_bbox, # Use accurate hand bbox
+            "debug_info": final_debug
+        })
         return result
         
     except Exception as e:

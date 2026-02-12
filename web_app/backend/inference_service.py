@@ -121,24 +121,43 @@ class InferenceService:
         
         # Mapping variations to knowledge base keys
         label_mapping = {
+            # Burns
             "Burns Detected": "Burns Detected",
+            "Healthy Skin": "Healthy Skin",
+            
+            # Jaundice
             "Jaundice": "Jaundice",
+            
+            # Skin Diseases
             "Acne": "Acne",
+            "Atopic Dermatitis": "Atopic_Dermatitis",
             "Atopic_Dermatitis": "Atopic_Dermatitis",
             "Psoriasis": "Psoriasis",
             "Rosacea": "Rosacea",
             "SkinCancer": "SkinCancer",
+            "Tinea Fungal": "Tinea_Fungal",
             "Tinea_Fungal": "Tinea_Fungal",
+            "Urticaria Hives": "Urticaria_Hives",
             "Urticaria_Hives": "Urticaria_Hives",
             "Vitiligo": "Vitiligo",
             "Warts": "Warts",
+            
+            # Nail Diseases
+            "Acral Lentiginous Melanoma": "Acral_Lentiginous_Melanoma",
+            "Blue Finger": "Blue_Finger",
+            "Clubbing": "Clubbing",
+            "Healthy Nail": "Healthy Nail",
+            "Nail Psoriasis": "Nail_Psoriasis",
+            "Onychogryphosis": "Onychogryphosis",
             "Onychomycosis": "Onychomycosis",
-            "Nail_Psoriasis": "Nail Psoriasis",
             "Pitting": "Pitting"
         }
         
-        clean_label = label.replace(" ", "_")
-        kb_key = label_mapping.get(label) or label_mapping.get(clean_label) or label
+        # Try direct match -> clean match -> mapped match
+        kb_key = label_mapping.get(label)
+        if not kb_key:
+             clean_label = label.replace(" ", "_")
+             kb_key = label_mapping.get(clean_label) or clean_label
         
         try:
             if kb_path.exists():
