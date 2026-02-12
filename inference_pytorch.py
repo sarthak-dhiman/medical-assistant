@@ -137,7 +137,11 @@ def get_eye_model():
             return _eye_model
             
         path = BASE_DIR / "saved_models" / "jaundice_with_sclera_torch.pth"
+        print(f"DEBUG: Looking for eye model at: {path}", flush=True)
+        print(f"DEBUG: Path exists: {path.exists()}", flush=True)
+        
         if not path.exists(): 
+            print(f"ERROR: Eye model file not found at {path}", flush=True)
             return None
             
         try:
@@ -151,6 +155,8 @@ def get_eye_model():
             return _eye_model
         except Exception as e:
             print(f"Failed to load Eye Model: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             return None
 
 def get_body_model():
@@ -166,7 +172,20 @@ def get_body_model():
             return _body_model
             
         path = BASE_DIR / "saved_models" / "jaundice_body_pytorch.pth"
-        if not path.exists(): 
+        print(f"DEBUG: Looking for body model at: {path}", flush=True)
+        print(f"DEBUG: BASE_DIR: {BASE_DIR}", flush=True)
+        print(f"DEBUG: Path exists: {path.exists()}", flush=True)
+        
+        if not path.exists():
+            print(f"ERROR: Body model file not found at {path}", flush=True)
+            # List directory contents for debugging
+            saved_models_dir = BASE_DIR / "saved_models"
+            if saved_models_dir.exists():
+                print(f"DEBUG: Contents of {saved_models_dir}:", flush=True)
+                for f in saved_models_dir.iterdir():
+                    print(f"  - {f.name}", flush=True)
+            else:
+                print(f"ERROR: saved_models directory not found at {saved_models_dir}", flush=True)
             return None
             
         try:
@@ -180,6 +199,8 @@ def get_body_model():
             return _body_model
         except Exception as e:
             print(f"Failed to load Body Model: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             return None
 
 def get_skin_model():
@@ -197,8 +218,19 @@ def get_skin_model():
         model_path = BASE_DIR / "saved_models" / "skin_disease_pytorch.pth"
         map_path = BASE_DIR / "saved_models" / "skin_disease_mapping.json"
         
+        print(f"DEBUG: Looking for skin model at: {model_path}", flush=True)
+        print(f"DEBUG: Looking for skin mapping at: {map_path}", flush=True)
+        print(f"DEBUG: Model path exists: {model_path.exists()}", flush=True)
+        print(f"DEBUG: Map path exists: {map_path.exists()}", flush=True)
+        
         if not model_path.exists() or not map_path.exists(): 
-            print(f"Skin model files missing: {model_path} or {map_path}", flush=True)
+            print(f"ERROR: Skin model files missing: {model_path} or {map_path}", flush=True)
+            # List directory contents for debugging
+            saved_models_dir = BASE_DIR / "saved_models"
+            if saved_models_dir.exists():
+                print(f"DEBUG: Contents of {saved_models_dir}:", flush=True)
+                for f in saved_models_dir.iterdir():
+                    print(f"  - {f.name}", flush=True)
             return None
         
         try:
