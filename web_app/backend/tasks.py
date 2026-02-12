@@ -159,7 +159,7 @@ def    detect_hand_and_crop(image):
 
 def load_models():
     """Loads models once per worker process (Unified PyTorch Engine)."""
-    global seg_model, jaundice_eye_model, jaundice_skin_model, skin_disease_model, init_errors
+    global seg_model, init_errors
     
     temp_errors = []
     
@@ -302,12 +302,12 @@ def predict_task(self, image_data_b64, mode, debug=False):
         
         # Model availability checks - only SegFormer is managed here
         # Other models are loaded by inference_service on demand
-        if mode in ["JAUNDICE_EYE", "JAUNDICE_BODY", "SKIN_DISEASE"]:
+        if mode in ["JAUNDICE_EYE", "JAUNDICE_BODY", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             if not seg_model or not seg_model.is_ready:
                 return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
         # Process based on mode
-        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             return _process_segmentation_mode(frame, mode, debug)
         else:
             return {"status": "error", "error": f"Unknown mode: {mode}"}
@@ -333,7 +333,7 @@ def _process_segmentation_mode(frame, mode, debug):
         h, w = frame.shape[:2]
         
         # 1. Segmentation (Needed for Jaundice, Skin, Burns)
-        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE"]:
+        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             # Optimization: Downscale for SegFormer
             INFERENCE_WIDTH = 480
             scale = INFERENCE_WIDTH / w
@@ -360,6 +360,10 @@ def _process_segmentation_mode(frame, mode, debug):
                 return _process_jaundice_eye(frame, skin_mask, w, h, debug, result)
             elif mode == "SKIN_DISEASE":
                 return _process_skin_disease(frame, skin_mask, w, h, debug, result)
+            elif mode == "BURNS":
+                return _process_burns(frame, skin_mask, w, h, debug, result)
+            elif mode == "NAIL_DISEASE":
+                return _process_nail_disease(frame, skin_mask, w, h, debug, result)
         
         return result
         
@@ -546,4 +550,91 @@ def _process_skin_disease(frame, skin_mask, w, h, debug, result):
         return {"status": "error", "error": f"Skin disease detection failed: {str(e)}"}
 
 
-# Note: Additional mode handlers (BURNS, NAIL_DISEASE) can be added here following the same pattern
+def _process_burns(frame, skin_mask, w, h, debug, result):
+    """Process burns detection."""
+    try:
+        if cv2.countNonZero(skin_mask) > 100:
+            y, x = np.where(skin_mask > 0)
+            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+            
+            # Crop from ORIGINAL frame to preserve BGR channels
+            crop = frame[y0:y1, x0:x1]
+            
+            # Ensure it's 3-channel BGR
+            if len(crop.shape) == 2:
+                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+            elif crop.shape[2] != 3:
+                crop = crop[:, :, :3]
+            
+            # Use inference service for prediction
+            label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
+            
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            
+            result.update({
+                "label": label, 
+                "confidence": float(conf), 
+                "bbox": [x0/w, y0/h, x1/w, y1/h],
+                "debug_info": debug_info
+            })
+        else:
+            debug_info = {}
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            result.update({
+                "label": "No Skin", 
+                "confidence": 0.0,
+                "debug_info": debug_info
+            })
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Burns processing error: {e}")
+        return {"status": "error", "error": f"Burns detection failed: {str(e)}"}
+
+
+def _process_nail_disease(frame, skin_mask, w, h, debug, result):
+    """Process nail disease detection."""
+    try:
+        if cv2.countNonZero(skin_mask) > 100:
+            y, x = np.where(skin_mask > 0)
+            y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
+            
+            # Crop from ORIGINAL frame to preserve BGR channels
+            crop = frame[y0:y1, x0:x1]
+            
+            # Ensure it's 3-channel BGR
+            if len(crop.shape) == 2:
+                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+            elif crop.shape[2] != 3:
+                crop = crop[:, :, :3]
+            
+            # Use inference service for prediction
+            label, conf, debug_info = inference_service.predict_nail_disease(crop, debug=debug)
+            
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            
+            result.update({
+                "label": label, 
+                "confidence": float(conf), 
+                "bbox": [x0/w, y0/h, x1/w, y1/h],
+                "debug_info": debug_info
+            })
+        else:
+            debug_info = {}
+            if "masks" not in debug_info: debug_info["masks"] = {}
+            debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
+            result.update({
+                "label": "No Skin", 
+                "confidence": 0.0,
+                "debug_info": debug_info
+            })
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Nail disease processing error: {e}")
+        return {"status": "error", "error": f"Nail disease detection failed: {str(e)}"}

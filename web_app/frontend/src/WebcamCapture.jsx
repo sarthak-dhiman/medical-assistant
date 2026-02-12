@@ -101,12 +101,12 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 // pywebview exposes 'predict' method via 'window.pywebview.api'
                 // The backend returns the final result directly (synchronous inference)
                 const result = await window.pywebview.api.predict(imageSrc, mode, isNerdMode)
-                
+
                 // Validate result
                 if (!result || typeof result !== 'object') {
                     throw new Error("Invalid result from pywebview");
                 }
-                
+
                 setResult(result)
                 setIsProcessing(false)
                 setIsGPUFull(false) // Reset GPU error state on success
@@ -119,11 +119,11 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
             // 2. WEB API (Standard Flow)
             console.log("Sending Request - Nerd Mode:", isNerdMode, "Mode:", mode);
-            
+
             // Add timeout and better error handling
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-            
+
             const response = await axios.post(`${API_URL}/predict`, {
                 image: imageSrc,
                 mode: mode,
@@ -134,7 +134,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                     'Content-Type': 'application/json'
                 }
             });
-            
+
             clearTimeout(timeoutId);
 
             // Validate response
@@ -148,14 +148,14 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             let pollAttempts = 0
             const MAX_POLL_ATTEMPTS = 600 // 120s timeout
             const POLL_INTERVAL = 200 // ms
-            
+
             const pollInterval = setInterval(async () => {
                 pollAttempts++
                 try {
                     const res = await axios.get(`${API_URL}/result/${task_id}`, {
                         timeout: 5000 // 5s timeout for poll requests
                     })
-                    
+
                     if (res.data.state === 'SUCCESS') {
                         // PREVENT STALE UPDATES:
                         if (mode !== latestModeRef.current) {
@@ -422,9 +422,9 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 {/* Instructions Removed (Moved to Sidebar) */}
 
                 {/* Mode Indicator & Instructions */}
-                <div className="absolute bottom-20 sm:bottom-6 left-4 right-4 sm:left-6 sm:right-auto transition-all duration-300 pointer-events-auto flex justify-center sm:block">
+                <div className="absolute bottom-32 md:bottom-28 lg:bottom-6 left-4 right-4 lg:left-6 lg:right-auto transition-all duration-300 pointer-events-auto flex justify-center lg:block">
                     {result && (
-                        <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full sm:w-auto sm:max-w-sm shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
                             <div className="flex justify-between items-start mb-1">
                                 <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">AI Diagnosis</p>
                                 {result.recommendations && (
