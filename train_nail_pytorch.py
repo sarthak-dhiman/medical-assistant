@@ -7,7 +7,7 @@ Architecture: EfficientNet-B4
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from pathlib import Path
 import cv2
 import numpy as np
@@ -40,14 +40,12 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Class mapping
 CLASS_NAMES = [
-    "Acral_Lentiginous_Melanoma",
-    "Blue_Finger",
-    "Clubbing",
-    "Healthy_Nail",
-    "Nail_Psoriasis",
-    "Onychogryphosis",
-    "Onychomycosis",
-    "Pitting"
+    "Acral_Lentiginous_Melanoma", "Alopecia_Areata", "Beaus_Lines", "Blue_Finger",
+    "Clubbing", "Dariers_Disease", "Eczema", "Half_And_Half_Nail",
+    "Healthy_Nail", "Koilonychia", "Leukonychia", "Lunula_Red",
+    "Muehrckes_Lines", "Nail_Pale", "Nail_Psoriasis", "Onychogryphosis",
+    "Onycholysis", "Onychomycosis", "Pitting", "Splinter_Hemorrhage",
+    "Terrys_Nails", "Nail_White", "Nails_Yellow"
 ]
 
 print(f"Nail Disease Detection Training")
@@ -202,7 +200,19 @@ def main():
     train_dataset = NailDataset(DATASET_ROOT, split='train', transform=get_transforms(True))
     test_dataset = NailDataset(DATASET_ROOT, split='test', transform=get_transforms(False))
     
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)
+    # Calculate weights for imbalance handling (ensure Healthy and minority classes are sampled)
+    labels = torch.tensor(train_dataset.labels)
+    class_sample_count = torch.tensor([(labels == t).sum() for t in range(len(CLASS_NAMES))])
+    
+    # Avoid division by zero if a class is missing (though mapping should find them now)
+    class_sample_count = torch.clamp(class_sample_count, min=1)
+    
+    weight = 1. / class_sample_count.float()
+    samples_weight = torch.tensor([weight[t] for t in labels])
+    sampler = WeightedRandomSampler(weights=samples_weight, num_samples=len(samples_weight), replacement=True)
+    
+    # Use sampler for train_loader (shuffle must be False when using a sampler)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=sampler, num_workers=NUM_WORKERS, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
     
     model = NailDiseaseModel(num_classes=len(CLASS_NAMES)).to(DEVICE)

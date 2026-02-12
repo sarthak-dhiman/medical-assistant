@@ -16,16 +16,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const [isGPUFull, setIsGPUFull] = useState(false)
     const [showRecs, setShowRecs] = useState(false)
 
-    // Ref to track the *current* active mode for avoiding stale responses
-    const latestModeRef = useRef(mode)
-    useEffect(() => {
-        latestModeRef.current = mode;
-        // RESET STATE ON MODE SWITCH
-        setResult(null);
-        setError(null);
-        setIsProcessing(false);
-    }, [mode])
-
     // Toggle Camera Callback
     const toggleCamera = useCallback(() => {
         setFacingMode(prev => prev === "user" ? "environment" : "user")
@@ -33,14 +23,22 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
     // Cache to prevent re-sending same static image
     const lastRequestRef = useRef({ image: null, mode: null })
+    
+    // Ref to track the *current* active mode for avoiding stale responses
+    const latestModeRef = useRef(mode)
+    
+    // Ref to track and cancel active polling intervals
+    const activePollRef = useRef(null)
+    
+    // Ref to track processing state (avoids stale closure issues)
+    const isProcessingRef = useRef(false)
 
     // Settings
     const CAPTURE_INTERVAL = 500 // ms (2 FPS for inference)
 
     const captureAndPredict = useCallback(async () => {
-        // Comprehensive input validation
-        if (isProcessing) {
-            console.log("Skipping capture: already processing");
+        // Use ref for immediate check (avoids stale closure)
+        if (isProcessingRef.current) {
             return;
         }
 
@@ -91,6 +89,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         // Update Cache
         lastRequestRef.current = { image: imageSrc, mode: mode }
 
+        isProcessingRef.current = true;
         setIsProcessing(true)
         setError(null)
         const startTime = Date.now()
@@ -108,6 +107,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 }
 
                 setResult(result)
+                isProcessingRef.current = false;
                 setIsProcessing(false)
                 setIsGPUFull(false) // Reset GPU error state on success
 
@@ -127,7 +127,8 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             const response = await axios.post(`${API_URL}/predict`, {
                 image: imageSrc,
                 mode: mode,
-                debug: isNerdMode // Enable Grad-CAM/Stats if Nerd Mode is ON
+                debug: isNerdMode, // Enable Grad-CAM/Stats if Nerd Mode is ON
+                is_upload: !!uploadedImage // True when using uploaded image (enables foot/nail fallback)
             }, {
                 signal: controller.signal,
                 headers: {
@@ -143,33 +144,49 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             }
 
             const { task_id } = response.data
+            const requestMode = mode; // Capture mode at request time
 
             // 2. Poll for Result with improved error handling
             let pollAttempts = 0
             const MAX_POLL_ATTEMPTS = 600 // 120s timeout
             const POLL_INTERVAL = 200 // ms
 
+            // Cancel any existing poll before starting new one
+            if (activePollRef.current) {
+                clearInterval(activePollRef.current);
+            }
+
             const pollInterval = setInterval(async () => {
                 pollAttempts++
+                
+                // Check if mode changed - cancel this poll
+                if (requestMode !== latestModeRef.current) {
+                    clearInterval(pollInterval);
+                    activePollRef.current = null;
+                    return;
+                }
+                
                 try {
                     const res = await axios.get(`${API_URL}/result/${task_id}`, {
                         timeout: 5000 // 5s timeout for poll requests
                     })
 
-                    if (res.data.state === 'SUCCESS') {
-                        // PREVENT STALE UPDATES:
-                        if (mode !== latestModeRef.current) {
-                            clearInterval(pollInterval);
-                            setIsProcessing(false);
-                            return;
-                        }
+                    // Double-check mode hasn't changed during the request
+                    if (requestMode !== latestModeRef.current) {
+                        clearInterval(pollInterval);
+                        activePollRef.current = null;
+                        return;
+                    }
 
+                    if (res.data.state === 'SUCCESS') {
                         // Handle GPU OOM
                         if (res.data.result && res.data.result.status === 'oom_error') {
                             setIsGPUFull(true);
                             setError("GPU Out of Memory");
                             setResult(null);
                             clearInterval(pollInterval);
+                            activePollRef.current = null;
+                            isProcessingRef.current = false;
                             setIsProcessing(false);
                             return;
                         }
@@ -179,6 +196,8 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                             setError(res.data.result.error || "Prediction error");
                             setResult(null);
                             clearInterval(pollInterval);
+                            activePollRef.current = null;
+                            isProcessingRef.current = false;
                             setIsProcessing(false);
                             return;
                         }
@@ -188,6 +207,8 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                             setError("Invalid result format");
                             setResult(null);
                             clearInterval(pollInterval);
+                            activePollRef.current = null;
+                            isProcessingRef.current = false;
                             setIsProcessing(false);
                             return;
                         }
@@ -195,6 +216,8 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         setResult(res.data.result)
                         setIsGPUFull(false) // Reset GPU error on success
                         clearInterval(pollInterval)
+                        activePollRef.current = null;
+                        isProcessingRef.current = false;
                         setIsProcessing(false)
 
                         // FPS Calc
@@ -202,17 +225,23 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         setFps(Math.round(1000 / duration))
                     } else if (res.data.state === 'FAILURE') {
                         clearInterval(pollInterval)
+                        activePollRef.current = null;
+                        isProcessingRef.current = false;
                         setIsProcessing(false)
                         setError(res.data.error || "Prediction Failed")
                         setResult(null)
                     } else if (pollAttempts > MAX_POLL_ATTEMPTS) { // Timeout
                         clearInterval(pollInterval)
+                        activePollRef.current = null;
+                        isProcessingRef.current = false;
                         setIsProcessing(false)
                         setError("Timeout (Backend Slow)")
                         setResult(null)
                     }
                 } catch (e) {
                     clearInterval(pollInterval)
+                    activePollRef.current = null;
+                    isProcessingRef.current = false;
                     setIsProcessing(false)
                     if (e.code === 'ECONNABORTED' || e.message.includes('timeout')) {
                         setError("Network Timeout")
@@ -224,9 +253,13 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                     setResult(null)
                 }
             }, POLL_INTERVAL)
+            
+            // Store reference so we can cancel on mode change
+            activePollRef.current = pollInterval;
 
         } catch (error) {
             console.error("Prediction Error:", error)
+            isProcessingRef.current = false;
             setIsProcessing(false)
             if (error.name === 'AbortError' || error.code === 'ECONNABORTED') {
                 setError("Request Timeout")
@@ -243,7 +276,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     // Auto-capture loop
     useEffect(() => {
         const interval = setInterval(() => {
-            // Only capture if NOT switching (unless switching takes too long)
             captureAndPredict()
         }, CAPTURE_INTERVAL)
         return () => clearInterval(interval)
@@ -251,18 +283,20 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
     // CRITICAL FIX: Reset ALL state when mode changes
     useEffect(() => {
+        // Cancel any active polling from previous mode
+        if (activePollRef.current) {
+            clearInterval(activePollRef.current);
+            activePollRef.current = null;
+        }
+        
+        latestModeRef.current = mode;
         setResult(null);
         setError(null);
-        setIsGPUFull(false); // Reset OOM status on mode change
-        setIsProcessing(false); // FIX: Reset processing state
-        lastRequestRef.current = { image: null, mode: null }; // FIX: Clear cache
-
-        // FIX: Force immediate capture after mode switch
-        setTimeout(() => {
-            if (!uploadedImage) {
-                captureAndPredict();
-            }
-        }, 100);
+        setIsGPUFull(false);
+        isProcessingRef.current = false;
+        setIsProcessing(false);
+        setShowRecs(false);
+        lastRequestRef.current = { image: null, mode: null };
     }, [mode])
 
     // Status Helper
@@ -425,17 +459,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 <div className="absolute bottom-32 md:bottom-28 lg:bottom-6 left-4 right-4 lg:left-6 lg:right-auto transition-all duration-300 pointer-events-auto flex justify-center lg:block">
                     {result && (
                         <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
-                            <div className="flex justify-between items-start mb-1">
-                                <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">AI Diagnosis</p>
-                                {result.recommendations && (
-                                    <button
-                                        onClick={() => setShowRecs(true)}
-                                        className="flex items-center gap-1 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition-colors"
-                                    >
-                                        LEARN MORE <ChevronRight className="w-3 h-3" />
-                                    </button>
-                                )}
-                            </div>
+                            <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-2">AI Diagnosis</p>
                             <div className="flex items-center justify-between gap-4">
                                 <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease') || (result.label || '').includes('Burns')
                                     ? 'text-red-400' : 'text-green-400'
@@ -446,6 +470,14 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                                     {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
                                 </span>
                             </div>
+                            {result.recommendations && (
+                                <button
+                                    onClick={() => setShowRecs(true)}
+                                    className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-cyan-400 hover:text-cyan-300 bg-cyan-400/10 hover:bg-cyan-400/20 py-2 px-3 rounded-lg transition-all"
+                                >
+                                    Learn More <ChevronRight className="w-4 h-4" />
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -456,65 +488,65 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
                     <div className="bg-gray-900 border border-white/10 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
                         {/* Modal Header */}
-                        <div className="p-6 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent">
+                        <div className="p-5 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent shrink-0">
                             <div className="flex items-center gap-3">
-                                <div className="p-3 bg-blue-600/20 rounded-2xl text-blue-400">
-                                    <Info className="w-6 h-6" />
+                                <div className="p-2.5 bg-blue-600/20 rounded-xl text-blue-400">
+                                    <Info className="w-5 h-5" />
                                 </div>
                                 <div>
-                                    <h2 className="text-2xl font-black text-white tracking-tight">Condition Details</h2>
-                                    <p className="text-blue-400 font-bold text-xs uppercase tracking-widest">{result.label}</p>
+                                    <h2 className="text-xl font-black text-white tracking-tight">Condition Details</h2>
+                                    <p className="text-blue-400 font-bold text-[10px] uppercase tracking-widest">{result.label}</p>
                                 </div>
                             </div>
                             <button
                                 onClick={() => setShowRecs(false)}
                                 className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all"
                             >
-                                <CloseIcon className="w-6 h-6" />
+                                <CloseIcon className="w-5 h-5" />
                             </button>
                         </div>
 
                         {/* Modal Body */}
-                        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                             {/* Description */}
                             <section>
-                                <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                    <div className="w-1 h-3 bg-blue-500 rounded-full" /> Overview
+                                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-2">
+                                    <div className="w-1 h-2.5 bg-blue-500 rounded-full" /> Overview
                                 </h3>
-                                <p className="text-gray-300 leading-relaxed">{result.recommendations.description}</p>
+                                <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.description}</p>
                             </section>
 
                             {/* Causes */}
                             {result.recommendations.causes && (
-                                <section className="bg-white/5 rounded-2xl p-4 border border-white/5">
-                                    <h3 className="text-xs font-black text-blue-400 uppercase tracking-widest mb-2">Common Causes</h3>
-                                    <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.causes}</p>
+                                <section className="bg-white/5 rounded-xl p-3 border border-white/5">
+                                    <h3 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1.5">Common Causes</h3>
+                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.causes}</p>
                                 </section>
                             )}
 
                             {/* Care & Recommendations */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <section className="bg-green-500/5 rounded-2xl p-4 border border-green-500/10">
-                                    <h3 className="text-xs font-black text-green-400 uppercase tracking-widest mb-2">Care Tips</h3>
-                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.care}</p>
+                            <div className="grid grid-cols-2 gap-3">
+                                <section className="bg-green-500/5 rounded-xl p-3 border border-green-500/10">
+                                    <h3 className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-1.5">Care Tips</h3>
+                                    <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.care}</p>
                                 </section>
-                                <section className="bg-cyan-500/5 rounded-2xl p-4 border border-cyan-500/10">
-                                    <h3 className="text-xs font-black text-cyan-400 uppercase tracking-widest mb-2">AI Guidance</h3>
-                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.recommendations}</p>
+                                <section className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/10">
+                                    <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-1.5">AI Guidance</h3>
+                                    <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.recommendations}</p>
                                 </section>
                             </div>
 
                             {/* Disclaimer */}
-                            <p className="text-[10px] text-gray-500 italic text-center pt-4 border-t border-white/5">
+                            <p className="text-[9px] text-gray-500 italic text-center pt-3 border-t border-white/5">
                                 This information is for educational purposes only and not a substitute for professional medical advice.
                             </p>
                         </div>
 
                         {/* Close Button */}
-                        <div className="p-6 bg-gray-950/50 border-t border-white/10">
+                        <div className="p-4 bg-gray-950/50 border-t border-white/10 shrink-0">
                             <button
                                 onClick={() => setShowRecs(false)}
-                                className="w-full py-4 bg-white text-black font-black rounded-2xl hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-widest text-xs"
+                                className="w-full py-3 bg-white text-black font-black rounded-xl hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-widest text-[11px]"
                             >
                                 Close Details
                             </button>

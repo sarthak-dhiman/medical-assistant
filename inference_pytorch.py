@@ -490,6 +490,11 @@ def predict_jaundice_eye(skin_img, sclera_crop=None, debug=False):
         # Context Manager for Gradients
         context = torch.enable_grad() if debug else torch.no_grad()
         
+        # For Grad-CAM, tensors need requires_grad=True
+        if debug:
+            skin_t = skin_t.requires_grad_(True)
+            sclera_t = sclera_t.requires_grad_(True)
+        
         if debug:
             # Hook the last conv layer of the Skin Backbone (EfficientNet)
             if hasattr(model.skin_backbone, 'conv_head'):
@@ -607,6 +612,10 @@ def predict_jaundice_body(img_bgr, debug=False):
     try:
         context = torch.enable_grad() if debug else torch.no_grad()
         
+        # For Grad-CAM, tensor needs requires_grad=True
+        if debug:
+            img_t = img_t.requires_grad_(True)
+        
         if debug:
             # Hook backbone conv_head
             if hasattr(model.backbone, 'conv_head'):
@@ -712,6 +721,10 @@ def predict_skin_disease_torch(img_bgr, debug=False):
     
     try:
         context = torch.enable_grad() if debug else torch.no_grad()
+        
+        # For Grad-CAM, tensor needs requires_grad=True
+        if debug:
+            img_t = img_t.requires_grad_(True)
         
         if debug:
             if hasattr(model.backbone, 'conv_head'):

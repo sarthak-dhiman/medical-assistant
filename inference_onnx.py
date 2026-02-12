@@ -4,6 +4,7 @@ import onnxruntime as ort
 import os
 import sys
 import json
+import time
 from pathlib import Path
 
 # --- Configuration ---
@@ -19,7 +20,11 @@ else:
 _eye_sess = None
 _body_sess = None
 _skin_sess = None
+_burns_sess = None
+_nail_sess = None
 _skin_classes = {}
+_nail_classes = {}
+USE_CUDA = os.getenv("ONNX_USE_CUDA", "0") == "1"
 
 def get_ort_session(model_name):
     path = BASE_DIR / "saved_models" / "onnx" / f"{model_name}.onnx"
@@ -28,8 +33,7 @@ def get_ort_session(model_name):
         return None
     
     try:
-        # Prefer CUDA, fallback to CPU
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if USE_CUDA else ['CPUExecutionProvider']
         sess = ort.InferenceSession(str(path), providers=providers)
         print(f"Loaded {model_name} (Providers: {sess.get_providers()})")
         return sess
@@ -68,6 +72,34 @@ def get_skin_session():
                 _skin_classes = {int(k): v for k, v in raw_map.items()}
     
     return _skin_sess
+
+def get_burns_session():
+    global _burns_sess
+    if _burns_sess: return _burns_sess
+    _burns_sess = get_ort_session("burns")
+    return _burns_sess
+
+def get_nail_session():
+    global _nail_sess, _nail_classes
+    if _nail_sess: return _nail_sess
+    
+    _nail_sess = get_ort_session("nail_disease")
+    if _nail_sess:
+        _load_nail_classes()
+    return _nail_sess
+
+def _load_nail_classes():
+    global _nail_classes
+    if _nail_classes:
+        return
+    map_path = BASE_DIR / "saved_models" / "nail_disease_mapping.json"
+    if map_path.exists():
+        with open(map_path, 'r') as f:
+            raw_map = json.load(f)
+            try:
+                _nail_classes = {int(k): v for k, v in raw_map.items()}
+            except ValueError:
+                _nail_classes = {int(v): k for k, v in raw_map.items()}
 
 # --- Preprocessing ---
 def preprocess_efficientnet(img_bgr, size=(380, 380)):
@@ -159,3 +191,53 @@ def predict_skin_disease_onnx(img_bgr):
         label = _skin_classes.get(idx, f"Class {idx}")
     
     return label, conf
+
+def predict_burns_onnx(img_bgr):
+    session = get_burns_session()
+    if not session: return "Model Missing", 0.0
+
+    input_name = session.get_inputs()[0].name
+    img_in = preprocess_efficientnet(img_bgr, size=IMG_SIZE)
+    outputs = session.run(None, {input_name: img_in})
+    logits = outputs[0]
+    prob = 1 / (1 + np.exp(-logits)).item()
+    if prob > 0.5:
+        return "Burns Detected", prob
+    return "Healthy/Normal", 1.0 - prob
+
+def predict_nail_disease_onnx(img_bgr):
+    session = get_nail_session()
+    if not session: return "Model Missing", 0.0
+
+    input_name = session.get_inputs()[0].name
+    img_in = preprocess_efficientnet(img_bgr, size=IMG_SIZE)
+    outputs = session.run(None, {input_name: img_in})
+    logits = outputs[0]
+
+    exp = np.exp(logits - np.max(logits))
+    probs = exp / exp.sum(axis=1)
+    idx = int(np.argmax(probs))
+    conf = float(probs[0, idx])
+    label = _nail_classes.get(idx, f"Class {idx}") if _nail_classes else f"Class {idx}"
+    return label, conf
+
+
+def _benchmark(iterations=10):
+    dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+    tests = [
+        ("JAUNDICE_BODY", predict_jaundice_body_onnx),
+        ("JAUNDICE_EYE", lambda img: predict_jaundice_eye_onnx(img, img)),
+        ("SKIN_DISEASE", predict_skin_disease_onnx),
+        ("BURNS", predict_burns_onnx),
+        ("NAIL_DISEASE", predict_nail_disease_onnx)
+    ]
+    for name, fn in tests:
+        start = time.perf_counter()
+        for _ in range(iterations):
+            fn(dummy)
+        avg_ms = (time.perf_counter() - start) / iterations * 1000
+        print(f"{name}: {avg_ms:.2f} ms per inference")
+
+
+if __name__ == "__main__":
+    _benchmark()

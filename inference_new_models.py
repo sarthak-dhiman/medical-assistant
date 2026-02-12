@@ -197,6 +197,10 @@ def predict_burns(img_bgr, debug=False):
         print("Preprocessing Burns Image...", flush=True)
         img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
         
+        # For Grad-CAM, tensor needs requires_grad=True
+        if debug:
+            img_tensor = img_tensor.requires_grad_(True)
+        
         # Setup Grad-CAM if debug mode is on
         context = torch.enable_grad() if debug else torch.no_grad()
         grad_cam = None
@@ -249,7 +253,9 @@ def predict_burns(img_bgr, debug=False):
         return label, conf, debug_info
         
     except Exception as e:
-        print(f"Error in predict_burns: {e}")
+        import traceback
+        print(f"Error in predict_burns: {e}", flush=True)
+        traceback.print_exc()
         return "Error", 0.0, {"error": str(e)}
 
 
@@ -269,6 +275,10 @@ def predict_nail_disease(img_bgr, debug=False):
     
     try:
         img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
+        
+        # For Grad-CAM, tensor needs requires_grad=True
+        if debug:
+            img_tensor = img_tensor.requires_grad_(True)
         
         # Setup Grad-CAM if debug mode is on
         context = torch.enable_grad() if debug else torch.no_grad()
@@ -305,8 +315,8 @@ def predict_nail_disease(img_bgr, debug=False):
         
         # Top-3 predictions
         topk_conf, topk_idx = torch.topk(probs, min(3, len(_nail_classes)))
-        topk_conf = topk_conf[0].cpu().numpy()
-        topk_idx = topk_idx[0].cpu().numpy()
+        topk_conf = topk_conf[0].detach().cpu().numpy()
+        topk_idx = topk_idx[0].detach().cpu().numpy()
         
         top3 = []
         for i in range(len(topk_idx)): # Iterate up to the actual number of topk results
@@ -327,6 +337,9 @@ def predict_nail_disease(img_bgr, debug=False):
         return label, conf, debug_info
         
     except Exception as e:
+        import traceback
+        print(f"Error in predict_nail_disease: {e}", flush=True)
+        traceback.print_exc()
         return "Error", 0.0, {"error": str(e)}
 
 

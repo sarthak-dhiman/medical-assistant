@@ -13,6 +13,8 @@ MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 sessions = {}
+SKIN_CLASSES = {}
+NAIL_CLASSES = {}
 
 def get_model_path(name):
     # PyInstaller puts files in sys._MEIPASS
@@ -100,8 +102,6 @@ def predict_eye(frame, debug_info):
     
     return {"label": label, "confidence": conf, "debug_info": debug_info}
 
-SKIN_CLASSES = {}
-
 def load_skin_mapping():
     global SKIN_CLASSES
     if SKIN_CLASSES: return
@@ -120,6 +120,25 @@ def load_skin_mapping():
                 SKIN_CLASSES = json.load(f)
         except Exception as e:
             print(f"Failed to load mapping: {e}")
+
+def load_nail_mapping():
+    global NAIL_CLASSES
+    if NAIL_CLASSES: return
+    base_dir = getattr(sys, '_MEIPASS', os.getcwd())
+    bundled_path = os.path.join(base_dir, 'models', 'nail_disease_mapping.json')
+    dev_path = os.path.join(base_dir, 'saved_models', 'nail_disease_mapping.json')
+    path = bundled_path if os.path.exists(bundled_path) else dev_path
+    if os.path.exists(path):
+        try:
+            with open(path, 'r') as f:
+                raw = json.load(f)
+                # Normalize to "idx" -> "label"
+                try:
+                    NAIL_CLASSES = {int(k): v for k, v in raw.items()}
+                except ValueError:
+                    NAIL_CLASSES = {int(v): k for k, v in raw.items()}
+        except Exception as e:
+            print(f"Failed to load nail mapping: {e}")
 
 def predict_skin(frame, debug_info):
     sess = get_session('skin_disease.onnx')
@@ -146,6 +165,39 @@ def predict_skin(frame, debug_info):
     top3 = [{"label": SKIN_CLASSES.get(str(i), f"Class {i}"), "confidence": float(probs[i])} for i in top3_idx]
     debug_info["top_3"] = top3
     
+    return {"label": label, "confidence": conf, "debug_info": debug_info}
+
+def predict_burns(frame, debug_info):
+    sess = get_session('burns.onnx')
+    if not sess: return {"error": "Model Missing"}
+    inp = preprocess(frame, IMG_SIZE)
+    logits = sess.run(['output'], {'input': inp})[0]
+    prob = 1.0 / (1.0 + np.exp(-logits))
+    prob = float(prob.item())
+    if prob > 0.5:
+        label = "Burns Detected"
+        conf = prob
+    else:
+        label = "Healthy/Normal"
+        conf = 1.0 - prob
+    debug_info["raw_probability"] = prob
+    return {"label": label, "confidence": conf, "debug_info": debug_info}
+
+def predict_nail(frame, debug_info):
+    sess = get_session('nail_disease.onnx')
+    if not sess: return {"error": "Model Missing"}
+    inp = preprocess(frame, IMG_SIZE)
+    logits = sess.run(['output'], {'input': inp})[0]
+    exp = np.exp(logits - np.max(logits))
+    probs = exp / exp.sum()
+    probs = probs[0]
+    idx = int(np.argmax(probs))
+    conf = float(probs[idx])
+    load_nail_mapping()
+    label = NAIL_CLASSES.get(idx, f"Class {idx}")
+    top3_idx = probs.argsort()[-3:][::-1]
+    top3 = [{"label": NAIL_CLASSES.get(int(i), f"Class {int(i)}"), "confidence": float(probs[int(i)])} for i in top3_idx]
+    debug_info["top_3"] = top3
     return {"label": label, "confidence": conf, "debug_info": debug_info}
 
 def predict_image(image_data_b64, mode, debug=False):
@@ -175,11 +227,15 @@ def predict_image(image_data_b64, mode, debug=False):
         
     try:
         if mode == "JAUNDICE_BODY":
-             return predict_body(frame, debug_info)
+            return predict_body(frame, debug_info)
         elif mode == "JAUNDICE_EYE":
-             return predict_eye(frame, debug_info)
+            return predict_eye(frame, debug_info)
         elif mode == "SKIN_DISEASE":
-             return predict_skin(frame, debug_info)
+            return predict_skin(frame, debug_info)
+        elif mode == "BURNS":
+            return predict_burns(frame, debug_info)
+        elif mode == "NAIL_DISEASE":
+            return predict_nail(frame, debug_info)
         return {"status": "error", "error": f"Unknown Mode: {mode}"}
     except Exception as e:
         return {"status": "error", "error": f"Inference Failed: {e}"}
