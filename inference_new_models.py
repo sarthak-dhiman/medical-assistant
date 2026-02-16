@@ -195,6 +195,38 @@ def get_burns_model():
 
 # --- Preprocessing Functions ---
 
+def _detect_skin_color(img_bgr):
+    """
+    Robust HSV+YCbCr Skin Detection (copied logic from segformer_utils to avoid heavy import).
+    Returns binary mask (255=skin, 0=non-skin).
+    """
+    try:
+        # Convert to HSV
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        # HSV Thresholds (Generic Skin)
+        lower_hsv = np.array([0, 15, 50], dtype=np.uint8)
+        upper_hsv = np.array([20, 255, 255], dtype=np.uint8)
+        mask_hsv = cv2.inRange(hsv, lower_hsv, upper_hsv)
+        
+        # Convert to YCbCr (More robust for lighting)
+        ycbcr = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
+        lower_ycbcr = np.array([0, 133, 77], dtype=np.uint8)
+        upper_ycbcr = np.array([255, 173, 127], dtype=np.uint8)
+        mask_ycbcr = cv2.inRange(ycbcr, lower_ycbcr, upper_ycbcr)
+        
+        # Combine
+        combined = cv2.bitwise_and(mask_hsv, mask_ycbcr)
+        
+        # Clean up
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
+        
+        return combined
+    except Exception as e:
+        print(f"Skin detection failed: {e}")
+        return np.ones(img_bgr.shape[:2], dtype=np.uint8) * 255 # Fallback to all skin
+
 def preprocess_image(img_bgr, target_size):
     """Resize and normalize image for inference"""
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -215,9 +247,24 @@ def preprocess_image(img_bgr, target_size):
 
 def predict_burns(img_bgr, debug=False):
     """
-    Predict burn detection
+    Predict burn detection.
+    Includes skin color check to filter out non-skin objects.
     Returns: (label, confidence, debug_info)
     """
+    # 1. Skin Detection Check
+    try:
+        skin_mask = _detect_skin_color(img_bgr)
+        # Calculate skin percentage
+        total_pixels = skin_mask.shape[0] * skin_mask.shape[1]
+        skin_pixels = cv2.countNonZero(skin_mask)
+        skin_ratio = skin_pixels / (total_pixels + 1e-6)
+        
+        if skin_ratio < 0.05: # Less than 5% skin detected
+            return "No Skin Detected", 1.0, {"skin_ratio": f"{skin_ratio:.1%}"}
+            
+    except Exception as e:
+        print(f"Skin check warning: {e}")
+
     model = get_burns_model()
     if model is None:
         return "Model Not Loaded", 0.0, {"error": "Burns model not available"}
