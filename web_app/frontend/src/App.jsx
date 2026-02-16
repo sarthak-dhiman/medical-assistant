@@ -62,6 +62,7 @@ function App() {
     { id: 'NAIL_DISEASE', label: 'Nail Disease', shortLabel: 'Nail', icon: <Stethoscope className="w-5 h-5" /> },
     { id: 'CATARACT', label: 'Cataract Detection', shortLabel: 'Eye', icon: <Eye className="w-5 h-5" /> },
     { id: 'ORAL_CANCER', label: 'Oral Cancer', shortLabel: 'Oral', icon: <Stethoscope className="w-5 h-5" /> },
+    { id: 'TEETH', label: 'Teeth Disease', shortLabel: 'Teeth', icon: <Stethoscope className="w-5 h-5" /> },
   ]
 
   const handleUpload = (e) => {
@@ -273,6 +274,9 @@ function App() {
                 {activeMode === 'SKIN_DISEASE' && "Focus camera on affected area. Keep steady."}
                 {activeMode === 'BURNS' && "Ensure good lighting. Focus on the burn area."}
                 {activeMode === 'NAIL_DISEASE' && "Focus specifically on the affected nail. Remove polish if possible."}
+                {activeMode === 'CATARACT' && "Zoom in on the eye. Good lighting is crucial."}
+                {activeMode === 'ORAL_CANCER' && "Open mouth wide. Focus on the lesion or affected area."}
+                {activeMode === 'TEETH' && "Open mouth wide. Focus clearly on the teeth and gums."}
               </p>
             </div>
 

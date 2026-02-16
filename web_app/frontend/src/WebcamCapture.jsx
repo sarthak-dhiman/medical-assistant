@@ -23,13 +23,13 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
     // Cache to prevent re-sending same static image
     const lastRequestRef = useRef({ image: null, mode: null })
-    
+
     // Ref to track the *current* active mode for avoiding stale responses
     const latestModeRef = useRef(mode)
-    
+
     // Ref to track and cancel active polling intervals
     const activePollRef = useRef(null)
-    
+
     // Ref to track processing state (avoids stale closure issues)
     const isProcessingRef = useRef(false)
 
@@ -158,14 +158,14 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
             const pollInterval = setInterval(async () => {
                 pollAttempts++
-                
+
                 // Check if mode changed - cancel this poll
                 if (requestMode !== latestModeRef.current) {
                     clearInterval(pollInterval);
                     activePollRef.current = null;
                     return;
                 }
-                
+
                 try {
                     const res = await axios.get(`${API_URL}/result/${task_id}`, {
                         timeout: 5000 // 5s timeout for poll requests
@@ -253,7 +253,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                     setResult(null)
                 }
             }, POLL_INTERVAL)
-            
+
             // Store reference so we can cancel on mode change
             activePollRef.current = pollInterval;
 
@@ -288,7 +288,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             clearInterval(activePollRef.current);
             activePollRef.current = null;
         }
-        
+
         latestModeRef.current = mode;
         setResult(null);
         setError(null);
@@ -317,6 +317,16 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 return "Ensure good lighting. Show face or skin clearly. Best for babies.";
             case "SKIN_DISEASE":
                 return "Focus camera on affected area. Keep steady.";
+            case "BURNS":
+                return "Ensure good lighting. Focus on the burn area.";
+            case "NAIL_DISEASE":
+                return "Focus specifically on the affected nail.";
+            case "CATARACT":
+                return "Zoom in on the eye. Good lighting is crucial.";
+            case "ORAL_CANCER":
+                return "Open mouth wide. Focus on the lesion.";
+            case "TEETH":
+                return "Open mouth wide. Focus clearly on the teeth.";
             default:
                 return "";
         }
