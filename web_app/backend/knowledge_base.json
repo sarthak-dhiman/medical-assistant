@@ -1,0 +1,128 @@
+{
+    "Acne": {
+        "description": "Acne is a skin condition that occurs when your hair follicles become plugged with oil and dead skin cells.",
+        "causes": "Excess oil production, hair follicles clogged by oil and dead skin cells, bacteria, and inflammation.",
+        "care": "Wash your face twice a day, use non-comedogenic products, and avoid picking at pimples.",
+        "recommendations": "Consider using over-the-counter treatments with benzoyl peroxide or salicylic acid. See a dermatologist for severe cases."
+    },
+    "Atopic_Dermatitis": {
+        "description": "Also known as eczema, atopic dermatitis makes your skin red and itchy.",
+        "causes": "A combination of genetic, environmental, and immune system factors.",
+        "care": "Moisturize your skin at least twice a day, avoid harsh soaps, and take shorter, lukewarm baths or showers.",
+        "recommendations": "Identify and avoid triggers that worsen the inflammation (like certain soaps, detergents, or stress)."
+    },
+    "Psoriasis": {
+        "description": "Psoriasis is a skin disease that causes red, itchy scaly patches, most commonly on the knees, elbows, trunk and scalp.",
+        "causes": "An immune system problem that causes skin cells to grow faster than usual.",
+        "care": "Keep skin moisturized, use gentle soaps, and try to manage stress.",
+        "recommendations": "Exposing your skin to small amounts of sunlight can sometimes help, but be careful of sunburns."
+    },
+    "Rosacea": {
+        "description": "Rosacea is a common skin condition that causes flushing or long-term redness on your face.",
+        "causes": "The exact cause is unknown, but it might be due to a combination of hereditary and environmental factors.",
+        "care": "Identify and avoid triggers (like spicy foods, hot drinks, or extreme temperatures). Wear sunscreen daily.",
+        "recommendations": "Use gentle cleansers and avoid products that contain alcohol or other skin irritants."
+    },
+    "SkinCancer": {
+        "description": "The abnormal growth of skin cells, most often develops on skin exposed to the sun.",
+        "causes": "Damage to DNA in skin cells, often caused by ultraviolet (UV) radiation from sunlight or tanning beds.",
+        "care": "Protect your skin from the sun with clothing and sunscreen. Perform regular skin self-exams.",
+        "recommendations": "See a dermatologist immediately if you notice any new or changing spots on your skin."
+    },
+    "Tinea_Fungal": {
+        "description": "A group of fungal infections of the skin.",
+        "causes": "Various types of fungi that thrive in warm, moist areas.",
+        "care": "Keep the affected area clean and dry. Avoid sharing personal items like towels or clothing.",
+        "recommendations": "Use over-the-counter antifungal creams or powders as directed."
+    },
+    "Urticaria_Hives": {
+        "description": "Red, itchy welts that result from a skin reaction.",
+        "causes": "Allergies to food, medicine, or other irritants; stress; or infections.",
+        "care": "Apply cold compresses to the affected area and wear loose-clothing.",
+        "recommendations": "Antihistamines can help relieve the itching and swelling."
+    },
+    "Vitiligo": {
+        "description": "A disease that causes loss of skin color in patches.",
+        "causes": "The pigment-producing cells (melanocytes) die or stop functioning.",
+        "care": "Protect depigmented skin from the sun with clothing or a high-SPF sunscreen.",
+        "recommendations": "Cosmetics or sun-tanning products may help reduce the appearance of patches."
+    },
+    "Warts": {
+        "description": "Small, grainy skin growths caused by a virus.",
+        "causes": "Human papillomavirus (HPV) infection.",
+        "care": "Avoid direct contact with warts. Don't pick at them, as they can spread.",
+        "recommendations": "Over-the-counter treatments with salicylic acid can often clear warts over time."
+    },
+    "Burns Detected": {
+        "description": "Damage to the skin or other organic tissue caused by heat or other radiation, electricity, friction, or contact with chemicals.",
+        "causes": "Heat (thermal burns), electricity, chemicals, or radiation (like sunburn).",
+        "care": "Cool the burn with lukewarm water. Do not apply ice directly. Cover with a sterile bandage.",
+        "recommendations": "Seek medical attention for deep burns, large areas, or burns on the face, hands, or joints."
+    },
+    "Jaundice": {
+        "description": "A condition in which the skin, whites of the eyes and mucous membranes turn yellow.",
+        "causes": "High levels of bilirubin, a yellow-orange bile pigment, in the blood.",
+        "care": "Treatment focuses on the underlying cause. Stay hydrated.",
+        "recommendations": "Consult a doctor immediately for diagnosis, as it can indicate liver or gallbladder issues."
+    },
+    "Onychomycosis": {
+        "description": "A fungal infection of the fingernails or toenails.",
+        "causes": "Various fungal organisms, most common being dermatophyte.",
+        "care": "Keep nails trimmed and clean. Avoid sharing footwear.",
+        "recommendations": "Antifungal medications (topical or oral) are typically required for treatment."
+    },
+    "Nail Psoriasis": {
+        "description": "Psoriasis that affects the fingernails and toenails.",
+        "causes": "Same as skin psoriasis (immune system issue).",
+        "care": "Keep nails short. Wear gloves when working with your hands.",
+        "recommendations": "Consult a dermatologist for specialized treatments like creams or injections."
+    },
+    "Pitting": {
+        "description": "Small depressions or dents on the surface of the nail.",
+        "causes": "Often associated with skin conditions like psoriasis or eczema.",
+        "care": "Treatment is usually directed at the underlying condition.",
+        "recommendations": "Regular moisturizing of the nail bed may help."
+    },
+    "Healthy Nail": {
+        "description": "Your nails appear healthy with no visible signs of disease.",
+        "causes": "N/A",
+        "care": "Continue good nail hygiene. Keep nails clean and dry.",
+        "recommendations": "Maintain a balanced diet rich in biotin and protein for strong nails."
+    },
+    "Healthy Skin": {
+        "description": "Your skin appears healthy with no visible signs of burns or disease.",
+        "causes": "N/A",
+        "care": "Continue your daily skincare routine. Use sunscreen.",
+        "recommendations": "Stay hydrated and protect your skin from excessive sun exposure."
+    },
+    "Clubbing": {
+        "description": "Changes in the areas under and around the toenails and fingernails that makes them look like the upside-down part of a spoon.",
+        "causes": "Low oxygen in the blood, lung disease, or heart defects.",
+        "care": "Treatment depends on the underlying cause.",
+        "recommendations": "Consult a doctor as this can be a sign of a serious underlying condition."
+    },
+    "Blue_Finger": {
+        "description": "A bluish or purplish discoloration of the fingers.",
+        "causes": "Poor circulation, cold temperatures, or low oxygen levels.",
+        "care": "Keep hands warm. Massage to improve circulation.",
+        "recommendations": "Seek medical attention if discoloration persists or is accompanied by pain."
+    },
+    "Onychogryphosis": {
+        "description": "A nail disease that causes one side of the nail to grow faster than the other.",
+        "causes": "Trauma, peripheral vascular disease, or neglect.",
+        "care": "Regular trimming and filing by a podiatrist.",
+        "recommendations": "Keep nails short and wear comfortable shoes."
+    },
+    "Acral_Lentiginous_Melanoma": {
+        "description": "A type of melanoma that appears on the palms, soles, or under the nails.",
+        "causes": "Genetic factors; not strictly related to sun exposure.",
+        "care": "Requires immediate medical attention.",
+        "recommendations": "See a dermatologist immediately for a biopsy and treatment plan."
+    },
+    "No Hand Detected": {
+        "description": "The AI could not find a clear hand in the image.",
+        "causes": "Poor lighting, camera angle, or hand being partially obscured.",
+        "care": "Please ensure your hand is fully visible and clearly positioned in front of the camera.",
+        "recommendations": "Try moving your hand slowly or improving the room lighting for better detection."
+    }
+}
