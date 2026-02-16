@@ -11,7 +11,7 @@ try:
     device = torch.device('cpu')
     print(f"Using Device: {device}")
     
-    from inference_pytorch import get_model
+    from inference import get_model
     model = get_model()
     
     if model:

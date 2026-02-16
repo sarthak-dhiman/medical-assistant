@@ -9,14 +9,17 @@ current_model = "JAUNDICE"  # Start in Jaundice mode
 
 try:
     # 1. New PyTorch Model for EYE detection
-    from inference_pytorch import predict_jaundice_eye as predict_jaundice_torch
+    from inference import predict_jaundice_eye as predict_jaundice_torch
     
     # 2. New PyTorch Model for BODY/SKIN Jaundice (Replaces Keras)
-    from inference_pytorch import predict_jaundice_body as predict_jaundice_body_torch
+    from inference import predict_jaundice_body as predict_jaundice_body_torch
     
     # 3. PyTorch Model for SKIN DISEASES (Replaces Keras)
-    from inference_pytorch import predict_skin_disease_torch
-    from inference_new_models import predict_burns, predict_nail_disease
+    from inference import predict_skin_disease_torch
+    from inference import predict_burns, predict_nail_disease
+    
+    # 4. PyTorch Model for TEETH DISEASES
+    from inference_new_models import predict_teeth_disease
     
     from segformer_utils import SegFormerWrapper
     MODELS_LOADED = True
@@ -42,8 +45,9 @@ except ImportError as e:
     def predict_jaundice_torch(skin, sclera=None): return "DUMMY: Jaundice", 0.0
     def predict_jaundice_body_torch(img): return "DUMMY: Jaundice", 0.0
     def predict_skin_disease_torch(img): return "DUMMY: Skin Disease", 0.0
-    def predict_burns(img): return "DUMMY: Burns", 0.0
-    def predict_nail_disease(img): return "DUMMY: Nail Disease", 0.0
+    def predict_burns(img): return "DUMMY: Burns", 0.0, {}
+    def predict_nail_disease(img): return "DUMMY: Nail Disease", 0.0, {}
+    def predict_teeth_disease(img, debug=False): return "DUMMY: Teeth Disease", 0.0, {}
 
 # --- 2. HELPER FUNCTIONS ---
 def get_manual_skin_mask(img):
@@ -149,7 +153,7 @@ def main():
 
     # Warmup Jaundice (Sclera) Model to show logs immediately
     try:
-        from inference_pytorch import get_model as get_jaundice_model
+        from inference import get_model as get_jaundice_model
         get_jaundice_model() 
     except Exception as e:
         print(f"Error warming up Jaundice model: {e}")
@@ -159,8 +163,8 @@ def main():
     # cap.set(3, 1280) 
     # cap.set(4, 720) # High res might slow down segmentation
 
-    # Mode Cycle: Jaundice Body -> Jaundice Eye -> Skin Disease -> Nail Disease -> Burns
-    modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "NAIL_DISEASE", "BURNS"]
+    # Mode Cycle: Jaundice Body -> Jaundice Eye -> Skin Disease -> Nail Disease -> Burns -> Teeth
+    modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "NAIL_DISEASE", "BURNS", "TEETH"]
     mode_idx = 0
     
     sidebar_width = 300
@@ -405,6 +409,35 @@ def main():
                 cx, cy = w//2, h//2
                 cv2.rectangle(frame, (cx-100, cy-100), (cx+100, cy+100), (255, 255, 0), 2)
 
+        # --- MODE 6: TEETH ---
+        elif current_model == "TEETH":
+            # Teeth detection works on oral/mouth images - use center region or full frame
+            if cv2.countNonZero(final_skin_mask) > (threshold/2):
+                masked_roi = cv2.bitwise_and(frame, frame, mask=final_skin_mask)
+                y_indices, x_indices = np.where(final_skin_mask > 0)
+                if len(y_indices) > 0:
+                    y_min, y_max = np.min(y_indices), np.max(y_indices)
+                    x_min, x_max = np.min(x_indices), np.max(x_indices)
+                    cropped_skin = masked_roi[y_min:y_max, x_min:x_max]
+                    if cropped_skin.size > 0:
+                        label, conf, _ = predict_teeth_disease(cropped_skin, debug=False)
+                        color = (0, 255, 0) if "Healthy" in label else (0, 0, 255)
+                        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, 2)
+                        sidebar_result = label
+                        sidebar_conf = f"Conf: {conf*100:.1f}%"
+            else:
+                sidebar_warning = "Show Teeth/Mouth"
+                cy, cx = h//2, w//2
+                crop_h, crop_w = h//2, w//2
+                y1, y2 = max(0, cy - crop_h//2), min(h, cy + crop_h//2)
+                x1, x2 = max(0, cx - crop_w//2), min(w, cx + crop_w//2)
+                crop = frame[y1:y2, x1:x2]
+                if crop.size > 0:
+                    label, conf, _ = predict_teeth_disease(crop, debug=False)
+                    color = (0, 255, 0) if "Healthy" in label else (0, 0, 255)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    sidebar_result = label
+                    sidebar_conf = f"Conf: {conf*100:.1f}%"
 
         # --- DRAW FINAL UI ---
         # Instead of writing directly on 'frame', we compose the sidebar

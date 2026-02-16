@@ -9,8 +9,8 @@ from pathlib import Path
 # Import architectures from inference_pytorch (or redefine them if imports are tricky)
 # To avoid import issues with relative paths if running as script, we'll just redefine/import carefully.
 try:
-    from inference_pytorch import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
-    from inference_new_models import BurnsModel, NailDiseaseModel
+    from inference import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
+    from inference import BurnsModel, NailDiseaseModel, CataractModel
 except ImportError:
     # Fallback: redefine if inference_pytorch isn't in path
     print("WARNING: Could not import architectures. Ensure inference scripts are in path.")
@@ -180,6 +180,33 @@ def export_nail_model():
     )
     print(f"Exported to {output_path}")
 
+def export_cataract_model():
+    print("--- Exporting Cataract Model ---")
+    path = Path("cataract_model.pth")
+    if not path.exists():
+        print(f"Skipping Cataract: {path} not found")
+        return
+
+    model = CataractModel().to(DEVICE)
+    model.load_state_dict(torch.load(path, map_location=DEVICE))
+    model.eval()
+
+    dummy_input = torch.randn(1, 3, 380, 380).to(DEVICE)
+    
+    output_path = SAVE_DIR / "cataract.onnx"
+    torch.onnx.export(
+        model, 
+        dummy_input, 
+        output_path,
+        export_params=True,
+        opset_version=14,
+        do_constant_folding=True,
+        input_names=['input'],
+        output_names=['output'],
+        dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+    )
+    print(f"Exported to {output_path}")
+
 if __name__ == "__main__":
     print(f"Exporting on device: {DEVICE}")
     export_body_model()
@@ -187,4 +214,5 @@ if __name__ == "__main__":
     export_skin_model()
     export_burns_model()
     export_nail_model()
+    export_cataract_model()
     print("Done!")

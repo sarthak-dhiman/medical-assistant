@@ -16,7 +16,7 @@ try:
     # Set CPU to avoid CUDA crashes
     import torch
     print(f"   Torch Version: {torch.__version__}")
-    from inference_pytorch import get_model
+    from inference import get_model
     model = get_model()
     if model:
         print("🛫 PyTorch Model Loaded.")

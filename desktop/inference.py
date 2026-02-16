@@ -200,6 +200,25 @@ def predict_nail(frame, debug_info):
     debug_info["top_3"] = top3
     return {"label": label, "confidence": conf, "debug_info": debug_info}
 
+CATARACT_CLASSES = ['Cataract', 'Normal']
+
+def predict_cataract(frame, debug_info):
+    sess = get_session('cataract.onnx')
+    if not sess: return {"error": "Model Missing"}
+    inp = preprocess(frame, IMG_SIZE)
+    logits = sess.run(['output'], {'input': inp})[0]
+    # Softmax for 2-class
+    exp = np.exp(logits - np.max(logits))
+    probs = exp / exp.sum()
+    probs = probs[0]
+    idx = int(np.argmax(probs))
+    conf = float(probs[idx])
+    label = CATARACT_CLASSES[idx]
+    debug_info["class_probabilities"] = {
+        CATARACT_CLASSES[i]: float(probs[i]) for i in range(len(CATARACT_CLASSES))
+    }
+    return {"label": label, "confidence": conf, "debug_info": debug_info}
+
 def predict_image(image_data_b64, mode, debug=False):
     # Decode
     try:
@@ -236,6 +255,8 @@ def predict_image(image_data_b64, mode, debug=False):
             return predict_burns(frame, debug_info)
         elif mode == "NAIL_DISEASE":
             return predict_nail(frame, debug_info)
+        elif mode == "CATARACT":
+            return predict_cataract(frame, debug_info)
         return {"status": "error", "error": f"Unknown Mode: {mode}"}
     except Exception as e:
         return {"status": "error", "error": f"Inference Failed: {e}"}

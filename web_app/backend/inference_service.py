@@ -16,10 +16,12 @@ from inference_pytorch import (
     predict_jaundice_body,
     predict_skin_disease_torch
 )
-
 from inference_new_models import (
     predict_burns,
-    predict_nail_disease
+    predict_nail_disease,
+    predict_cataract,
+    predict_oral_cancer,
+    predict_teeth_disease
 )
 
 logger = logging.getLogger(__name__)
@@ -107,6 +109,33 @@ class InferenceService:
             return "Error", 0.0, {"error": str(e)}
     
     @staticmethod
+    def predict_cataract(img_bgr, debug=False):
+        """Predict cataract from eye image"""
+        try:
+            return predict_cataract(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Cataract inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+
+    @staticmethod
+    def predict_oral_cancer(img_bgr, debug=False):
+        """Predict oral cancer from oral cavity image"""
+        try:
+            return predict_oral_cancer(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Oral cancer inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
+    def predict_teeth_disease(img_bgr, debug=False):
+        """Predict teeth disease from teeth/mouth image"""
+        try:
+            return predict_teeth_disease(img_bgr, debug)
+        except Exception as e:
+            logger.error(f"Teeth disease inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
+    @staticmethod
     def get_recommendations(label):
         """
         Fetch recommendations and explanations from the knowledge base.
@@ -150,7 +179,13 @@ class InferenceService:
             "Nail Psoriasis": "Nail_Psoriasis",
             "Onychogryphosis": "Onychogryphosis",
             "Onychomycosis": "Onychomycosis",
-            "Pitting": "Pitting"
+            "Pitting": "Pitting",
+            
+            # Cataract
+            "Cataract": "Cataract",
+            "Normal": "Normal"
+            # Oral Cancer
+            ,"Oral_Cancer": "Oral_Cancer"
         }
         
         # Try direct match -> clean match -> mapped match

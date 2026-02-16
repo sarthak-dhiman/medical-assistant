@@ -17,6 +17,7 @@ services:
     command: uvicorn web_app.backend.main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
+      - ./external:/app/external # Mount external repos (YOLOv7)
     environment:
       - REDIS_URL=redis://redis:6379/0
       # Security: Allow frontend access
@@ -38,9 +39,9 @@ services:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
 
       interval: 30s
-      timeout: 10s
+      timeout: 30s
       retries: 5
-      start_period: 40s
+      start_period: 120s
     depends_on:
       - redis
     networks:
@@ -54,6 +55,7 @@ services:
     command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1
     volumes:
       - ./saved_models:/app/saved_models
+      - ./external:/app/external
       - hf_cache:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379/0

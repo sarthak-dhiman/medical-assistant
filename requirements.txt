@@ -12,3 +12,7 @@ transformers
 tensorflow
 tqdm
 scikit-learn
+ultralytics
+pandas
+matplotlib
+seaborn

@@ -68,7 +68,8 @@ async def health_check():
         # Wait up to 2 seconds for worker response
         # If worker is busy loading models, this might timeout initially
         task = check_model_health.delay()
-        result = task.get(timeout=2.0)
+        # Increase timeout to 9.0s to allow worker startup (Docker timeout is 10s)
+        result = task.get(timeout=9.0)
         
         if result.get("ready"):
             return {"status": "ready", "models_ready": True, "details": result}

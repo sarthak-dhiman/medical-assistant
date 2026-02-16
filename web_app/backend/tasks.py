@@ -211,17 +211,35 @@ def init_models(**kwargs):
     else:
         logger.info("✅ SegFormer Ready. Warming up Classification Models...")
         try:
-            # Import getters locally to avoid top-level side effects (just in case)
-            from inference_new_models import get_burns_model, get_nail_model
+            # Import getters directly from source modules to ensure availability inside containers
             from inference_pytorch import get_eye_model, get_body_model, get_skin_model
-            
-            # Trigger loading
-            get_eye_model()
-            get_body_model()
-            get_skin_model()
-            get_burns_model()
-            get_nail_model()
-            logger.info("✅ WORKER INIT SUCCESS: All models warmed up!")
+            from inference_new_models import get_burns_model, get_nail_model, get_cataract_model, get_oral_cancer_model, get_teeth_model
+
+            # Trigger loading with timing logs
+            import time
+            warmup_funcs = [
+                ("eye_model", get_eye_model),
+                ("body_model", get_body_model),
+                ("skin_model", get_skin_model),
+                ("burns_model", get_burns_model),
+                ("nail_model", get_nail_model),
+                ("cataract_model", get_cataract_model),
+                ("oral_cancer_model", get_oral_cancer_model),
+                ("teeth_model", get_teeth_model)
+            ]
+
+            total_start = time.time()
+            for name, fn in warmup_funcs:
+                try:
+                    start = time.time()
+                    fn()
+                    duration = time.time() - start
+                    logger.info(f"Warmup: {name} loaded in {duration:.3f}s")
+                except Exception as me:
+                    logger.warning(f"Warmup failed for {name}: {me}")
+
+            total_dur = time.time() - total_start
+            logger.info(f"✅ WORKER INIT SUCCESS: Models warmed up (total {total_dur:.3f}s)")
         except Exception as e:
             logger.error(f"⚠️ Model Warmup Partial Fail: {e}")
 
@@ -254,7 +272,7 @@ def predict_task(self, image_data_b64, mode, debug=False):
         if not image_data_b64 or not isinstance(image_data_b64, str):
             return {"status": "error", "error": "Invalid or missing image data"}
         
-        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
+        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE", "CATARACT", "ORAL_CANCER", "TEETH"]:
             return {"status": "error", "error": f"Invalid mode: {mode}"}
         
         # Decode Image with comprehensive error handling
@@ -307,7 +325,34 @@ def predict_task(self, image_data_b64, mode, debug=False):
                 return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
         # Process based on mode
-        if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
+        if mode == "CATARACT":
+            # Cataract doesn't need segmentation - direct inference
+            return _process_cataract(frame, debug)
+        elif mode == "ORAL_CANCER":
+            # Oral cancer is a direct classification on oral cavity images
+            try:
+                label, conf, debug_info = inference_service.predict_oral_cancer(frame, debug=debug)
+                result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
+                recommendations = inference_service.get_recommendations(label)
+                if recommendations:
+                    result["recommendations"] = recommendations
+                return result
+            except Exception as e:
+                logger.error(f"Oral cancer processing error: {e}")
+                return {"status": "error", "error": f"Oral cancer detection failed: {str(e)}"}
+        elif mode == "TEETH":
+            # Teeth disease is a direct classification on teeth/mouth images
+            try:
+                label, conf, debug_info = inference_service.predict_teeth_disease(frame, debug=debug)
+                result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
+                recommendations = inference_service.get_recommendations(label)
+                if recommendations:
+                    result["recommendations"] = recommendations
+                return result
+            except Exception as e:
+                logger.error(f"Teeth disease processing error: {e}")
+                return {"status": "error", "error": f"Teeth disease detection failed: {str(e)}"}
+        elif mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             return _process_segmentation_mode(frame, mode, debug)
         else:
             return {"status": "error", "error": f"Unknown mode: {mode}"}
@@ -628,3 +673,33 @@ def _process_nail_disease(frame, skin_mask, w, h, debug, result):
     except Exception as e:
         logger.error(f"Nail disease processing error: {e}")
         return {"status": "error", "error": f"Nail disease detection failed: {str(e)}"}
+
+
+def _process_cataract(frame, debug):
+    """Process cataract detection from eye image.
+    
+    Cataract detection doesn't require body segmentation - it works directly
+    on close-up eye images (e.g., slit lamp photos or eye close-ups).
+    """
+    result = {"status": "success", "mode": "CATARACT"}
+    
+    try:
+        # Direct inference on the input frame (expected to be eye image)
+        label, conf, debug_info = inference_service.predict_cataract(frame, debug=debug)
+        
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info
+        })
+        
+        # Add recommendations
+        recommendations = inference_service.get_recommendations(label)
+        if recommendations:
+            result["recommendations"] = recommendations
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Cataract processing error: {e}")
+        return {"status": "error", "error": f"Cataract detection failed: {str(e)}"}

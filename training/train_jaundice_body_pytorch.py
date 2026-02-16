@@ -95,7 +95,7 @@ class JaundiceBodyModel(nn.Module):
 # MAIN
 # ============================================================================
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     # Config
     IMG_SIZE = 380
     BATCH_SIZE = 8

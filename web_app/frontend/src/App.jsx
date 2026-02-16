@@ -60,6 +60,8 @@ function App() {
     { id: 'SKIN_DISEASE', label: 'Skin Disease', shortLabel: 'Skin', icon: <Stethoscope className="w-5 h-5" /> },
     { id: 'BURNS', label: 'Burns Detection', shortLabel: 'Burns', icon: <Stethoscope className="w-5 h-5" /> },
     { id: 'NAIL_DISEASE', label: 'Nail Disease', shortLabel: 'Nail', icon: <Stethoscope className="w-5 h-5" /> },
+    { id: 'CATARACT', label: 'Cataract Detection', shortLabel: 'Eye', icon: <Eye className="w-5 h-5" /> },
+    { id: 'ORAL_CANCER', label: 'Oral Cancer', shortLabel: 'Oral', icon: <Stethoscope className="w-5 h-5" /> },
   ]
 
   const handleUpload = (e) => {

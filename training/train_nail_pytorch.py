@@ -274,5 +274,5 @@ def main():
     print(f"Test Accuracy: {test_acc:.4f}")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
