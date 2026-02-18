@@ -4,7 +4,7 @@ import axios from 'axios'
 import ResultDisplay from './ResultDisplay'
 import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon } from 'lucide-react'
 
-const API_URL = "" // Relative path (proxied by Nginx)
+const API_URL = `http://${window.location.hostname}:8000`
 
 const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShowHelp }) => {
     const webcamRef = useRef(null)

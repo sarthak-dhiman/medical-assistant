@@ -1,0 +1,9 @@
+{
+  "Calculus": 0,
+  "Caries": 1,
+  "Gingivitis": 2,
+  "Healthy": 3,
+  "Hypodontia": 4,
+  "Mouth Ulcer": 5,
+  "Tooth Discoloration": 6
+}

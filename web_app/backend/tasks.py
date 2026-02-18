@@ -11,6 +11,11 @@ import mediapipe as mp
 
 import datetime
 
+# --- Performance & Stability ---
+# Force MediaPipe to CPU to avoid EGL errors in Docker with NVIDIA GPUS
+# This is safe because MediaPipe (Hands/Pose) is very fast on CPU
+os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+
 # --- IST Logging Configuration ---
 def ist_converter(*args):
     # IST = UTC + 5:30
@@ -213,7 +218,9 @@ def init_models(**kwargs):
         try:
             # Import getters directly from source modules to ensure availability inside containers
             from inference_pytorch import get_eye_model, get_body_model, get_skin_model
-            from inference_new_models import get_burns_model, get_nail_model, get_cataract_model, get_oral_cancer_model, get_teeth_model
+            # Import getters directly from source modules to ensure availability inside containers
+            from inference_pytorch import get_eye_model, get_body_model, get_skin_model
+            from inference_new_models import get_burns_model, get_nail_model, get_oral_cancer_model, get_teeth_model, get_posture_model
 
             # Trigger loading with timing logs
             import time
@@ -223,9 +230,10 @@ def init_models(**kwargs):
                 ("skin_model", get_skin_model),
                 ("burns_model", get_burns_model),
                 ("nail_model", get_nail_model),
-                ("cataract_model", get_cataract_model),
+                # cataract_model removed
                 ("oral_cancer_model", get_oral_cancer_model),
-                ("teeth_model", get_teeth_model)
+                ("teeth_model", get_teeth_model),
+                ("posture_model", get_posture_model)
             ]
 
             total_start = time.time()
@@ -272,7 +280,7 @@ def predict_task(self, image_data_b64, mode, debug=False):
         if not image_data_b64 or not isinstance(image_data_b64, str):
             return {"status": "error", "error": "Invalid or missing image data"}
         
-        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE", "CATARACT", "ORAL_CANCER", "TEETH"]:
+        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE", "CATARACT", "ORAL_CANCER", "TEETH", "POSTURE"]:
             return {"status": "error", "error": f"Invalid mode: {mode}"}
         
         # Decode Image with comprehensive error handling
@@ -325,14 +333,14 @@ def predict_task(self, image_data_b64, mode, debug=False):
                 return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
         # Process based on mode
-        if mode == "CATARACT":
-            # Cataract doesn't need segmentation - direct inference
-            return _process_cataract(frame, debug)
-        elif mode == "ORAL_CANCER":
+        # CATARACT case removed
+        if mode == "ORAL_CANCER":
             # Oral cancer is a direct classification on oral cavity images
             try:
                 label, conf, debug_info = inference_service.predict_oral_cancer(frame, debug=debug)
                 result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
+                if "bbox" in debug_info:
+                    result["bbox"] = debug_info["bbox"]
                 recommendations = inference_service.get_recommendations(label)
                 if recommendations:
                     result["recommendations"] = recommendations
@@ -345,6 +353,8 @@ def predict_task(self, image_data_b64, mode, debug=False):
             try:
                 label, conf, debug_info = inference_service.predict_teeth_disease(frame, debug=debug)
                 result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
+                if "bbox" in debug_info:
+                    result["bbox"] = debug_info["bbox"]
                 recommendations = inference_service.get_recommendations(label)
                 if recommendations:
                     result["recommendations"] = recommendations
@@ -352,6 +362,8 @@ def predict_task(self, image_data_b64, mode, debug=False):
             except Exception as e:
                 logger.error(f"Teeth disease processing error: {e}")
                 return {"status": "error", "error": f"Teeth disease detection failed: {str(e)}"}
+        elif mode == "POSTURE":
+            return _process_posture(frame, w, h, debug, result)
         elif mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             return _process_segmentation_mode(frame, mode, debug)
         else:
@@ -390,13 +402,16 @@ def _process_segmentation_mode(frame, mode, debug):
             mask_small = seg_model.predict(small_frame)
             mask = cv2.resize(mask_small, (w, h), interpolation=cv2.INTER_NEAREST)
             
-            # Skin Mask (Semantic)
-            skin_mask = seg_model.get_skin_mask(mask)
+            # Skin Mask (Semantic) - Face/Neck
+            skin_mask_sem = seg_model.get_skin_mask(mask)
             
-            # Fallback: If Semantic Segmentation (Face/Neck) found nothing, 
-            # try Color-Based Skin Detection (for Arms/Legs/Hands)
-            if cv2.countNonZero(skin_mask) == 0:
-                skin_mask = seg_model.get_skin_mask_color(frame)
+            # Skin Mask (Color) - Arms/Hands/Legs
+            # Always compute this to capture non-face skin
+            skin_mask_color = seg_model.get_skin_mask_color(frame)
+            
+            # Combine: Union of both methods
+            # This ensures we get high-quality face mask + color-based body mask
+            skin_mask = cv2.bitwise_or(skin_mask_sem, skin_mask_color)
             
             # Process based on specific mode
             if mode == "JAUNDICE_BODY":
@@ -598,7 +613,11 @@ def _process_skin_disease(frame, skin_mask, w, h, debug, result):
 def _process_burns(frame, skin_mask, w, h, debug, result):
     """Process burns detection."""
     try:
-        if cv2.countNonZero(skin_mask) > 100:
+        skin_pixels = cv2.countNonZero(skin_mask)
+        if debug:
+            print(f"[DEBUG] Burns Skin Pixels: {skin_pixels}", flush=True)
+            
+        if skin_pixels > 100:
             y, x = np.where(skin_mask > 0)
             y0, y1, x0, x1 = y.min(), y.max(), x.min(), x.max()
             
@@ -692,6 +711,8 @@ def _process_cataract(frame, debug):
             "confidence": float(conf),
             "debug_info": debug_info
         })
+        # if debug:
+        #     result["bbox"] = [0.0, 0.0, 1.0, 1.0] # Removed redundant full-frame box
         
         # Add recommendations
         recommendations = inference_service.get_recommendations(label)
@@ -703,3 +724,267 @@ def _process_cataract(frame, debug):
     except Exception as e:
         logger.error(f"Cataract processing error: {e}")
         return {"status": "error", "error": f"Cataract detection failed: {str(e)}"}
+
+
+# --- Diagnostic Gateway ---
+
+# Lazy initialization
+mp_pose = None
+pose_detector = None
+
+def _process_posture(frame, w, h, debug, result):
+    """Process posture detection using MediaPipe Pose."""
+    try:
+        # Lazy initialization
+        global mp_pose, pose_detector
+        if 'mp_pose' not in globals() or mp_pose is None:
+            try:
+                mp_pose = mp.solutions.pose
+                # Use model_complexity=2 for better accuracy (especially side views)
+                # static_image_mode=True is correct because we are processing discrete frames from frontend
+                pose_detector = mp_pose.Pose(
+                    static_image_mode=True, 
+                    model_complexity=2, 
+                    enable_segmentation= False,
+                    min_detection_confidence=0.3
+                )
+                logger.info("MediaPipe Pose Model Initialized (Complexity=2)")
+            except Exception as e:
+                    logger.error(f"Failed to init MediaPipe Pose: {e}")
+                    return {"status": "error", "error": "Pose model init failed"}
+        
+        # Check if detector is actually ready (in case mp_pose init worked but detector didn't)
+        if pose_detector is None:
+             return {"status": "error", "error": "Pose detector not initialized"}
+
+
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = pose_detector.process(img_rgb)
+        
+        debug_info = {}
+        
+        if results.pose_landmarks:
+            # Extract landmarks for frontend rendering (smoother)
+            landmarks = []
+            for lm in results.pose_landmarks.landmark:
+                landmarks.append({
+                    "x": lm.x,
+                    "y": lm.y,
+                    "z": lm.z,
+                    "visibility": lm.visibility
+                })
+            
+            result["landmarks"] = landmarks
+                
+            # --- Custom Classifier Integration ---
+            # Indices for 6 COCO-like points: 
+            # 0:Nose, 11:L_Sho, 12:R_Sho, 23:L_Hip, 24:R_Hip, 25:L_Knee?
+            # Actually let's use the first 5 and compute Spine Mid for 6th.
+            # Match the order in training script (first 6 annotations).
+            
+            try:
+                # Extract 12 features (6 pts * x,y)
+                # 0: Nose (mp 0)
+                # 1: L Shoulder (mp 11)
+                # 2: R Shoulder (mp 12)
+                # 3: L Hip (mp 23)
+                # 4: R Hip (mp 24)
+                # 5: Spine/Mid Trunk (midpoint of L/R shoulder and L/R hip)
+                
+                pt_nose = landmarks[0]
+                pt_lsho = landmarks[11]
+                pt_rsho = landmarks[12]
+                pt_lhip = landmarks[23]
+                pt_rhip = landmarks[24]
+                
+                # Spine Mid Calculation
+                spine_x = (pt_lsho['x'] + pt_rsho['x'] + pt_lhip['x'] + pt_rhip['x']) / 4.0
+                spine_y = (pt_lsho['y'] + pt_rsho['y'] + pt_lhip['y'] + pt_rhip['y']) / 4.0
+                
+                features = [
+                    pt_nose['x'], pt_nose['y'],
+                    pt_lsho['x'], pt_lsho['y'],
+                    pt_rsho['x'], pt_rsho['y'],
+                    pt_lhip['x'], pt_lhip['y'],
+                    pt_rhip['x'], pt_rhip['y'],
+                    spine_x, spine_y
+                ]
+                
+                label, conf, _ = inference_service.predict_posture(features, debug=debug)
+                
+            except Exception as pe:
+                logger.error(f"Posture classification failed: {pe}")
+                label = "Posture Detected (Classification Failed)"
+                conf = 0.5
+            
+            result.update({
+                "label": label,
+                "confidence": conf,
+                "debug_info": debug_info
+            })
+        else:
+             result.update({
+                "label": "No Posture Detected",
+                "confidence": 0.0,
+                "debug_info": debug_info
+            })
+            
+        return result
+
+    except Exception as e:
+        logger.error(f"Posture processing error: {e}")
+        return {"status": "error", "error": f"Posture detection failed: {str(e)}"}
+
+
+# --- Diagnostic Gateway ---
+
+# Lazy initialization
+mp_face_mesh = None
+face_mesh_detector = None
+yolo_model = None
+
+def get_face_mesh():
+    global mp_face_mesh, face_mesh_detector
+    if face_mesh_detector is None:
+        try:
+            mp_face_mesh = mp.solutions.face_mesh
+            face_mesh_detector = mp_face_mesh.FaceMesh(
+                static_image_mode=True,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5
+            )
+        except Exception as e:
+            logger.error(f"Failed to init MediaPipe Face Mesh: {e}")
+            return None
+    return face_mesh_detector
+
+def get_yolo_model():
+    global yolo_model
+    if yolo_model is None:
+        try:
+            from ultralytics import YOLO
+            # Load standard YOLOv8n model (will download if not present)
+            # Using 'yolov8n.pt' which is small and fast
+            model_path = "/app/saved_models/yolov8n.pt"
+            logger.info(f"Loading YOLOv8n from {model_path}...")
+            yolo_model = YOLO(model_path) 
+        except Exception as e:
+            logger.error(f"Failed to init YOLO: {e}")
+            return None
+    return yolo_model
+
+@celery_app.task(bind=True, max_retries=3)
+def diagnostic_gateway_task(self, image_data_b64, debug=False):
+    """
+    Automatic routing of image to appropriate model based on content analysis.
+    Refined Logic:
+    1. Hands -> Nail Disease
+    2. Face Detected -> 
+       - Close-up Eyes -> Cataract
+       - Close-up Mouth -> Oral Cancer
+       - Else -> Jaundice Eye or Skin Disease (NOT Jaundice Body)
+    3. No Face Detected -> 
+       - YOLO Person/Infant Detected -> Jaundice Body
+       - Else -> Skin Disease (Macro)
+    """
+    try:
+        # 1. Decode Image
+        if not image_data_b64 or not isinstance(image_data_b64, str):
+            return {"status": "error", "error": "Invalid image data"}
+        
+        try:
+            if "," in image_data_b64:
+                _, image_data_b64 = image_data_b64.split(",", 1)
+            image_bytes = base64.b64decode(image_data_b64)
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None: raise ValueError("Decode failed")
+        except Exception as e:
+            return {"status": "error", "error": "Image decoding failed"}
+
+        h, w = frame.shape[:2]
+        
+        # 2. ANALYSIS & ROUTING
+        
+        # A. Hand Detection (High Priority)
+        _, hand_debug, _ = detect_hand_and_crop(frame)
+        if hand_debug.get("hand_detected", False):
+            logger.info("Auto-Routing: Hand Detected -> NAIL_DISEASE")
+            return predict_task(image_data_b64, "NAIL_DISEASE", debug)
+
+        # B. Face/Feature Detection (Face Mesh)
+        mesh = get_face_mesh()
+        route_mode = "SKIN_DISEASE" # Default Fallback (Macro Skin)
+        
+        face_detected = False
+        
+        if mesh:
+            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = mesh.process(img_rgb)
+            
+            if results.multi_face_landmarks:
+                face_detected = True
+                landmarks = results.multi_face_landmarks[0].landmark
+                
+                # Heuristics for Features
+                img_area = w * h
+                
+                def get_bbox_area(indices, landmarks, w, h):
+                    xs = [landmarks[i].x * w for i in indices]
+                    ys = [landmarks[i].y * h for i in indices]
+                    return (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+                # Left Eye (33, 133, 159, 145), Right Eye (362, 263, 386, 374)
+                left_eye_area = get_bbox_area([33, 133, 159, 145], landmarks, w, h)
+                right_eye_area = get_bbox_area([362, 263, 386, 374], landmarks, w, h)
+                total_eye_area = left_eye_area + right_eye_area
+                
+                # Lips (61, 291, 0, 17)
+                lips_area = get_bbox_area([61, 291, 0, 17], landmarks, w, h)
+                
+                eye_ratio = total_eye_area / img_area
+                lips_ratio = lips_area / img_area
+                
+                logger.info(f"Auto-Routing Analysis: EyeRatio={eye_ratio:.3f}, LipsRatio={lips_ratio:.3f}")
+                
+                if lips_ratio > 0.12: 
+                    route_mode = "ORAL_CANCER" # Close up mouth
+                elif eye_ratio > 0.10: 
+                    route_mode = "CATARACT" # Close up eyes
+                else:
+                    # Face detected but not macro.
+                    # User: "face should either trigger the jaundice eye model or the skin model"
+                    # We'll stick to Jaundice Eye as it's more specific for general face views than Skin Disease
+                    route_mode = "JAUNDICE_EYE"
+        
+        # C. Infant/Body Check (Only if NO FACE detected)
+        # Jaundice Body is restricted to Babies/Infants
+        if not face_detected:
+            # Check for Body/Person using YOLO
+            yolo = get_yolo_model()
+            person_detected = False
+            
+            if yolo:
+                # Run inference
+                yolo_results = yolo(frame, verbose=False, classes=[0]) # class 0 is person
+                # Check if any person detected
+                for r in yolo_results:
+                    if len(r.boxes) > 0:
+                        person_detected = True
+                        break
+            
+            if person_detected:
+                # "Infant" proxy
+                route_mode = "JAUNDICE_BODY"
+            else:
+                # No Face, No Body -> Macro Skin or Object
+                route_mode = "SKIN_DISEASE"
+
+        # 3. DISPATCH
+        logger.info(f"Auto-Routing Decision: {route_mode} (Face: {face_detected})")
+        return predict_task(image_data_b64, route_mode, debug)
+
+    except Exception as e:
+        logger.error(f"Gateway failed: {e}")
+        return {"status": "error", "error": f"Gateway failed: {str(e)}"}

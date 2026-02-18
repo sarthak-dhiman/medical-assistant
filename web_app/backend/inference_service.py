@@ -19,9 +19,10 @@ from inference_pytorch import (
 from inference_new_models import (
     predict_burns,
     predict_nail_disease,
-    predict_cataract,
+    # predict_cataract removed
     predict_oral_cancer,
-    predict_teeth_disease
+    predict_teeth_disease,
+    predict_posture_from_landmarks
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,15 @@ class InferenceService:
             logger.error(f"Burns inference failed: {e}")
             return "Error", 0.0, {"error": str(e)}
     
+    @staticmethod
+    def predict_posture(landmarks, debug=False):
+        """Predict posture from landmarks"""
+        try:
+            return predict_posture_from_landmarks(landmarks, debug)
+        except Exception as e:
+            logger.error(f"Posture inference failed: {e}")
+            return "Error", 0.0, {"error": str(e)}
+    
 
     
     @staticmethod
@@ -108,14 +118,7 @@ class InferenceService:
             logger.error(f"Nail Disease inference failed: {e}")
             return "Error", 0.0, {"error": str(e)}
     
-    @staticmethod
-    def predict_cataract(img_bgr, debug=False):
-        """Predict cataract from eye image"""
-        try:
-            return predict_cataract(img_bgr, debug)
-        except Exception as e:
-            logger.error(f"Cataract inference failed: {e}")
-            return "Error", 0.0, {"error": str(e)}
+    # predict_cataract method removed
 
     @staticmethod
     def predict_oral_cancer(img_bgr, debug=False):
@@ -181,11 +184,9 @@ class InferenceService:
             "Onychomycosis": "Onychomycosis",
             "Pitting": "Pitting",
             
-            # Cataract
-            "Cataract": "Cataract",
-            "Normal": "Normal"
+            # Cataract removed
             # Oral Cancer
-            ,"Oral_Cancer": "Oral_Cancer"
+            "Oral_Cancer": "Oral_Cancer"
         }
         
         # Try direct match -> clean match -> mapped match

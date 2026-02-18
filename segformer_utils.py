@@ -478,21 +478,25 @@ class SegFormerWrapper:
         kernel_open = np.ones((3,3), np.uint8)
         skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel_open)
 
-        # 3. Largest Contour Filter - Removes Color Cards/checkered patterns
-        # Assumption: The Face/Neck is the largest skin-colored object in the frame.
+        # 3. Size Filter - Remove small noise (Speckles)
+        # Keep all significant blobs (Face, Neck, etc.)
         contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
-            # Sort by area (descending)
-            contours = sorted(contours, key=cv2.contourArea, reverse=True)
-            
             # Create a new blank mask
             filtered_mask = np.zeros_like(skin_mask)
             
-            # Draw ONLY the largest contour
-            cv2.drawContours(filtered_mask, [contours[0]], -1, 255, -1)
+            h, w = skin_mask.shape
+            min_area = (h * w) * 0.005 # 0.5% of image area
             
-            return filtered_mask
+            found_any = False
+            for c in contours:
+                if cv2.contourArea(c) > min_area:
+                    cv2.drawContours(filtered_mask, [c], -1, 255, -1)
+                    found_any = True
+            
+            if found_any:
+                return filtered_mask
 
         # Fallback: SegFormer found nothing? Try HSV Color Skin Detection
         # This is useful for arms/hands/legs where SegFormer (Face-trained) might fail

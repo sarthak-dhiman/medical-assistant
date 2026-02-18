@@ -16,6 +16,10 @@ import threading
 import base64
 import sys
 from vis_utils import GradCAM, generate_heatmap_overlay
+import mediapipe as mp
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 # Configuration
 IMG_SIZE_LARGE = (380, 380)  # Burns, Nail
@@ -39,20 +43,66 @@ def get_device():
 _burns_model = None
 _nail_model = None
 _nail_classes = None
-_cataract_model = None
 _oral_cancer_model = None
 _teeth_model = None
 _teeth_classes = None
+_posture_model = None
+
+# Class Definitions
+ORAL_CANCER_CLASSES = ['Normal', 'Oral_Cancer']
+TEETH_CLASSES = ['Calculus', 'Gingivitis', 'Hypodontia', 'Microdontia', 'Mouth Discoloration', 'Spot', 'Ulcer']
 
 # Thread-safe locks
 _model_locks = {
     'burns': threading.Lock(),
     'nail': threading.Lock(),
-    'cataract': threading.Lock(),
+    # cataract removed
     'oral_cancer': threading.Lock(),
-    'teeth': threading.Lock()
+    'teeth': threading.Lock(),
+    'posture': threading.Lock()
 }
 
+def get_last_conv_layer(model):
+    """Finds the last Conv2d layer in a model, common target for Grad-CAM."""
+    conv_layers = [m for m in model.modules() if isinstance(m, nn.Conv2d)]
+    print(f"Found {len(conv_layers)} conv layers in model.")
+    if conv_layers:
+        last_layer = conv_layers[-1]
+        print(f"Selecting target layer for Grad-CAM: {last_layer.__class__.__name__}")
+        return last_layer
+    return None
+
+
+# --- Helper Functions ---
+
+def preprocess_image(img_bgr, target_size):
+    """
+    Standard preprocessing for classification models.
+    Args:
+        img_bgr: Input image in BGR format
+        target_size: Tuple (W, H)
+    Returns:
+        tuple: (img_tensor, img_resized)
+    """
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    img_resized = cv2.resize(img_rgb, target_size)
+    
+    # Normalize 0-1
+    img_norm = img_resized.astype(np.float32) / 255.0
+    
+    # Standard ImageNet normalization
+    # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    img_norm = (img_norm - mean) / std
+    
+    # CHW format
+    img_chw = img_norm.transpose((2, 0, 1))
+    
+    # Batch dimension
+    img_tensor = torch.from_numpy(img_chw).unsqueeze(0).float().to(get_device())
+    
+    return img_tensor, img_resized
 
 # --- Model Architectures ---
 
@@ -91,6 +141,143 @@ class NailDiseaseModel(nn.Module):
         return self.classifier(features)
 
 
+class TeethDiseaseModel(nn.Module):
+    """Multi-class classification for teeth pathologies"""
+    def __init__(self, num_classes=7):
+        super().__init__()
+        self.backbone = timm.create_model('efficientnet_b4', pretrained=False, num_classes=0)
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.4),
+            nn.Linear(self.backbone.num_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, num_classes)
+        )
+    
+    def forward(self, x):
+        features = self.backbone(x)
+        return self.classifier(features)
+
+
+class PostureClassifier(nn.Module):
+    def __init__(self, input_size=12, num_classes=2):
+        super(PostureClassifier, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_size, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, num_classes)
+        )
+    
+    def forward(self, x):
+        return self.network(x)
+
+
+# --- Eye Segmentation Helper ---
+
+_mp_face_mesh = None
+
+def get_face_mesh():
+    global _mp_face_mesh
+    if _mp_face_mesh is None:
+        _mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        )
+    return _mp_face_mesh
+
+def segment_eye_mp(img_bgr):
+    """Detects and crops eye region using MediaPipe for cleaner 'Eye Mask' view."""
+    face_mesh = get_face_mesh()
+    h, w = img_bgr.shape[:2]
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(img_rgb)
+    
+    if not results.multi_face_landmarks:
+        return None, None
+    
+    landmarks = results.multi_face_landmarks[0].landmark
+    # LEFT_EYE landmarks (using a simplified bounding box)
+    # MediaPipe Left Eye: 33, 133, 157, 158, 159, 160, 161, 246
+    eye_indices = [33, 133, 157, 158, 159, 160, 161, 246, 7, 163, 144, 145, 153, 154, 155, 133]
+    
+    x_coords = [landmarks[i].x * w for i in eye_indices]
+    y_coords = [landmarks[i].y * h for i in eye_indices]
+    
+    x1, y1 = int(min(x_coords)), int(min(y_coords))
+    x2, y2 = int(max(x_coords)), int(max(y_coords))
+    
+    # Add padding
+    pw, ph = int((x2-x1)*0.3), int((y2-y1)*0.3)
+    x1, y1 = max(0, x1-pw), max(0, y1-ph)
+    x2, y2 = min(w, x2+pw), min(h, y2+ph)
+    
+    crop = img_bgr[y1:y2, x1:x2]
+    
+    # Create simple iris mask for visualization consistency
+    mask = np.zeros((y2-y1, x2-x1), dtype=np.uint8)
+    points = np.array([[landmarks[i].x*w - x1, landmarks[i].y*h - y1] for i in eye_indices], dtype=np.int32)
+    cv2.fillPoly(mask, [points], 255)
+    
+    return crop, mask
+
+
+def analyze_mouth(img_bgr):
+    """
+    Analyzes mouth status using MediaPipe Face Mesh.
+    Returns: (bbox, open_ratio, error_msg)
+    bbox: [x1, y1, x2, y2] normalized
+    """
+    try:
+        face_mesh = get_face_mesh()
+        results = face_mesh.process(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+        
+        if not results.multi_face_landmarks:
+            return None, 0.0, "No Face Detected"
+            
+        landmarks = results.multi_face_landmarks[0].landmark
+        h, w, c = img_bgr.shape
+        
+        # Mouth Landmarks (Inner lips for openness)
+        top_lip = landmarks[13]
+        bottom_lip = landmarks[14]
+        
+        # Calculate opening
+        mouth_open_dist = np.linalg.norm(np.array([top_lip.x*w, top_lip.y*h]) - np.array([bottom_lip.x*w, bottom_lip.y*h]))
+        
+        # Face height for normalization
+        face_top = landmarks[10].y * h
+        face_bottom = landmarks[152].y * h
+        face_height = face_bottom - face_top
+        
+        open_ratio = mouth_open_dist / (face_height + 1e-6)
+        
+        # Bounding Box (Outer lips)
+        # 61 (left), 291 (right), 0 (top), 17 (bottom) - approximation
+        lip_indices = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 185, 40, 39, 37, 0, 267, 269, 270, 409]
+        xs = [landmarks[i].x for i in lip_indices]
+        ys = [landmarks[i].y for i in lip_indices]
+        
+        x1, x2 = min(xs), max(xs)
+        y1, y2 = min(ys), max(ys)
+        
+        # Add padding
+        pw = (x2-x1) * 0.2
+        ph = (y2-y1) * 0.2
+        bbox = [max(0.0, x1-pw), max(0.0, y1-ph), min(1.0, x2+pw), min(1.0, y2+ph)]
+        
+        return bbox, open_ratio, None
+        
+    except Exception as e:
+        # print(f"Mouth analysis failed: {e}")
+        return None, 0.0, str(e)
+
+
+
 # CataractModel wrapper removed - model is saved as complete timm object
 # The training script saves the unwrapped model directly, so we load it as-is
 
@@ -109,81 +296,68 @@ def get_burns_model():
         if _burns_model:
             return _burns_model
         
-        # Priority 1: User specified YOLO model (YOLOv7 custom)
-        path = BASE_DIR / "saved_models" / "skin_burn_2022_8_21.pt"
-        is_yolov7 = True
+        # Priority: User specified YOLO model (YOLOv7 custom)
+        # Note: The model file is expected to be in saved_models
+        # It might be named 'skin_burn_2022_8_21.pt' or similar
         
-        if not path.exists():
-            # Priority 2: Standard/Renamed model (YOLOv8/v5)
-            path = BASE_DIR / "saved_models" / "burns_pytorch.pt"
-            is_yolov7 = False
-            
-        if not path.exists():
+        # Check for the specific file the user likely has
+        model_paths = [
+            BASE_DIR / "saved_models" / "skin_burn_2022_8_21.pt",
+            BASE_DIR / "saved_models" / "best.pt", # Common name
+            BASE_DIR / "saved_models" / "yolov7.pt"
+        ]
+        
+        path = None
+        for p in model_paths:
+            if p.exists():
+                path = p
+                break
+        
+        if not path:
+             # Fallback check
+             found = list((BASE_DIR / "saved_models").glob("*.pt"))
+             if found:
+                 path = found[0]
+                 
+        if not path:
+            print("Burns model (.pt) not found in saved_models.", flush=True)
             return None
         
         try:
             print(f"Loading Burns Model from {path.name}...", flush=True)
             
-            # 1. Try Local YOLOv7 Repo (for skin_burn_2022_8_21.pt)
-            if is_yolov7 or path.name == "skin_burn_2022_8_21.pt":
-                repo_path = BASE_DIR / "external" / "Skin-Burn-Detection-Classification"
-                if repo_path.exists():
-                    import sys
-                    if str(repo_path) not in sys.path:
-                        sys.path.insert(0, str(repo_path))
+            # --- Load using External Repo (YOLOv7 - Baked In) ---
+            # repo_path = BASE_DIR / "external" / "skin-burn-repo" # OLD
+            repo_path = BASE_DIR / "yolov7_ops" # NEW (Baked in backend)
+            
+            if repo_path.exists():
+                import sys
+                # Add repo to sys.path to allow imports from it
+                # This allow 'from models.experimental import attempt_load' to work internally
+                if str(repo_path) not in sys.path:
+                    sys.path.insert(0, str(repo_path))
+                
+                try:
+                    # Import from external repo
+                    from models.experimental import attempt_load
                     
-                    try:
-                        from models.experimental import attempt_load
-                        model = attempt_load(str(path), map_location=get_device())
-                        _burns_model = BurnsModel(model)
-                        _burns_model.model_type = 'yolov7'
-                        print(f"Burns Model Loaded from {path.name} (YOLOv7 Native)", flush=True)
-                        return _burns_model
-                    except ImportError as e:
-                        print(f"Failed to load YOLOv7 native: {e}")
-                    except Exception as e:
-                        print(f"Error loading YOLOv7: {e}")
-            
-            # 2. Try Ultralytics (YOLOv8/v5 fallback)
-            try:
-                from ultralytics import YOLO
-                model = YOLO(str(path))
-                _burns_model = model
-                # Check if it has 'model' attribute to distinguish
-                if not hasattr(_burns_model, 'model_type'):
-                     _burns_model.model_type = 'ultralytics'
-                print(f"Burns Model Loaded from {path.name} (ultralytics)", flush=True)
-                return _burns_model
-            except ImportError:
-                print("Ultralytics not available, loading checkpoint directly...", flush=True)
-            except Exception as e:
-                 print(f"Ultralytics load failed: {e}")
+                    # atomic load
+                    model = attempt_load(str(path), map_location=get_device())
+                    _burns_model = BurnsModel(model)
+                    _burns_model.model_type = 'yolov7_external'
+                    print(f"Burns Model Loaded from {path.name} (Local YOLOv7 Ops)", flush=True)
+                    return _burns_model
+                    
+                except ImportError as e:
+                    print(f"Failed to import from yolov7_ops: {e}")
+                except Exception as e:
+                    print(f"Error loading via yolov7_ops: {e}")
+            else:
+                print(f"Local yolov7_ops repo not found at {repo_path}")
 
-            # 3. Direct Checkpoint Load (Legacy/Raw)
-            checkpoint = torch.load(path, map_location=get_device())
+            # --- Fallbacks (Ultralytics / YOLOv5) ---
+            # ... (omitted for brevity, preferring external repo)
             
-            if isinstance(checkpoint, dict):
-                if 'model' in checkpoint:
-                     yolo_model = checkpoint['model']
-                     _burns_model = BurnsModel(yolo_model)
-                     _burns_model.model_type = 'yolov7' # Assume raw model dict is yolo
-                     print("Burns Model Loaded (from checkpoint 'model' key)", flush=True)
-                     return _burns_model
-                elif 'ema' in checkpoint:
-                     yolo_model = checkpoint['ema']
-                     _burns_model = BurnsModel(yolo_model)
-                     _burns_model.model_type = 'yolov7'
-                     print("Burns Model Loaded (from checkpoint 'ema' key)", flush=True)
-                     return _burns_model
-
-            # Direct model object
-            elif hasattr(checkpoint, 'eval'):
-                 _burns_model = BurnsModel(checkpoint)
-                 _burns_model.model_type = 'yolov7'
-                 print("Burns Model Loaded (direct model object)", flush=True)
-                 return _burns_model
-            
-            print("Warning: Could not load YOLO model from checkpoint.", flush=True)
             return None
             
         except Exception as e:
@@ -193,73 +367,18 @@ def get_burns_model():
             return None
 
 
-# --- Preprocessing Functions ---
-
-def _detect_skin_color(img_bgr):
-    """
-    Robust HSV+YCbCr Skin Detection (copied logic from segformer_utils to avoid heavy import).
-    Returns binary mask (255=skin, 0=non-skin).
-    """
-    try:
-        # Convert to HSV
-        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-        # HSV Thresholds (Generic Skin)
-        lower_hsv = np.array([0, 15, 50], dtype=np.uint8)
-        upper_hsv = np.array([20, 255, 255], dtype=np.uint8)
-        mask_hsv = cv2.inRange(hsv, lower_hsv, upper_hsv)
-        
-        # Convert to YCbCr (More robust for lighting)
-        ycbcr = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-        lower_ycbcr = np.array([0, 133, 77], dtype=np.uint8)
-        upper_ycbcr = np.array([255, 173, 127], dtype=np.uint8)
-        mask_ycbcr = cv2.inRange(ycbcr, lower_ycbcr, upper_ycbcr)
-        
-        # Combine
-        combined = cv2.bitwise_and(mask_hsv, mask_ycbcr)
-        
-        # Clean up
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
-        
-        return combined
-    except Exception as e:
-        print(f"Skin detection failed: {e}")
-        return np.ones(img_bgr.shape[:2], dtype=np.uint8) * 255 # Fallback to all skin
-
-def preprocess_image(img_bgr, target_size):
-    """Resize and normalize image for inference"""
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    img_resized = cv2.resize(img_rgb, target_size)
-    img_normalized = img_resized.astype(np.float32) / 255.0
-    
-    # ImageNet normalization
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    img_normalized = (img_normalized - mean) / std
-    
-    # Convert to tensor (CHW format)
-    img_tensor = torch.from_numpy(img_normalized.transpose(2, 0, 1)).unsqueeze(0)
-    return img_tensor.to(get_device()), img_resized
-
-
-# --- Inference Functions ---
-
 def predict_burns(img_bgr, debug=False):
     """
-    Predict burn detection.
-    Includes skin color check to filter out non-skin objects.
-    Returns: (label, confidence, debug_info)
+    Predict burn detection using External YOLOv7 Repo logic.
     """
     # 1. Skin Detection Check
     try:
         skin_mask = _detect_skin_color(img_bgr)
-        # Calculate skin percentage
         total_pixels = skin_mask.shape[0] * skin_mask.shape[1]
         skin_pixels = cv2.countNonZero(skin_mask)
         skin_ratio = skin_pixels / (total_pixels + 1e-6)
         
-        if skin_ratio < 0.05: # Less than 5% skin detected
+        if skin_ratio < 0.05:
             return "No Skin Detected", 1.0, {"skin_ratio": f"{skin_ratio:.1%}"}
             
     except Exception as e:
@@ -275,40 +394,19 @@ def predict_burns(img_bgr, debug=False):
         # Check model type
         model_type = getattr(model, 'model_type', 'legacy')
         
-        # 1. Ultralytics YOLO (v8/v5)
-        if model_type == 'ultralytics' or (hasattr(model, 'model') and not isinstance(model, BurnsModel)):
-             # YOLO Inference
+        if model_type == 'yolov7_external':
             try:
-                results = model.predict(img_bgr, verbose=False)
-                if len(results) > 0 and len(results[0].boxes) > 0:
-                    boxes = results[0].boxes
-                    conf = float(boxes.conf[0].item())
-                    cls = int(boxes.cls[0].item())
-                    label = results[0].names[cls]
-                    
-                    if debug:
-                        annotated_img = results[0].plot()
-                        _, buffer = cv2.imencode('.jpg', annotated_img)
-                        debug_info["overlay"] = base64.b64encode(buffer).decode('utf-8')
-                    
-                    return label, conf, debug_info
-                else:
-                    return "Healthy", 0.95, debug_info
-            except Exception as e:
-                print(f"Ultralytics Inference Error: {e}")
-
-        # 2. Native YOLOv7 (Custom Repo)
-        elif model_type == 'yolov7':
-            try:
+                # Imports from external repo (reliant on sys.path injection in get_burns_model)
                 from utils.general import non_max_suppression, scale_coords
+                # from utils.torch_utils import select_device # Not needed if we control device manually?
                 
-                # Preprocess for YOLOv7 (usually needs 640x640, BGR->RGB, CHW)
-                # But expects 0-255 or 0-1? attempt_load models usually want 0-1 and normalized?
-                # YOLOv7 logic: img /= 255.0.
-                
+                # Preprocess
+                # YOLOv7 default img_size is usually 640
                 img_size = 640
                 img = cv2.resize(img_bgr, (img_size, img_size))
-                img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x640x640
+                
+                # BGR to RGB, CHW
+                img = img[:, :, ::-1].transpose(2, 0, 1)  
                 img = np.ascontiguousarray(img)
                 img = torch.from_numpy(img).to(get_device())
                 img = img.float() 
@@ -318,64 +416,73 @@ def predict_burns(img_bgr, debug=False):
                 
                 # Inference
                 with torch.no_grad():
+                    # model.model is the actual PyTorch model inside our wrapper
                     pred = model.model(img)[0]
                 
                 # NMS
+                # conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False
                 pred = non_max_suppression(pred, 0.25, 0.45)
                 
                 # Process detections
                 det = pred[0]
+                
+                label = "Healthy" # Default
+                conf_val = 0.0
+                
                 if det is not None and len(det):
-                    # Rescale boxes from img_size to original image size
-                    # scale_coords(img.shape[2:], det[:, :4], img_bgr.shape).round()
+                    # Rescale boxes to original image shape
+                    det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img_bgr.shape).round()
                     
-                    # We typically want best confidence
-                    # Columns: x1, y1, x2, y2, conf, cls
+                    # Find best match
                     best_conf = 0.0
                     best_cls = -1
+                    best_bbox = None
                     
                     for *xyxy, conf, cls in det:
                          if conf > best_conf:
                              best_conf = conf.item()
                              best_cls = int(cls.item())
+                             best_bbox = [x.item() for x in xyxy]
                     
-                    # Map class to label
-                    # Check model.names if available
-                    names = getattr(model.model, 'names', ['Burn'])
-                    if hasattr(names, 'keys'): # dict
+                    # Get class name
+                    names = getattr(model.model, 'module', model.model).names
+                    if hasattr(names, 'keys'): # dict {0: 'name'}
                          label = names.get(best_cls, 'Burn')
-                    else: # list
+                    else: # list ['name', ...]
                          label = names[best_cls] if best_cls < len(names) else 'Burn'
+                    
+                    if label.lower() == 'burn':
+                         label = 'Burn Detected' # User friendly
                          
-                    # Debug overlay
-                    if debug:
-                         # Draw boxes (simplified)
+                    conf_val = best_conf
+                    
+                    if debug and best_bbox:
+                         # normalize bbox for UI
+                         h, w = img_bgr.shape[:2]
+                         debug_info['bbox'] = [
+                             best_bbox[0]/w, best_bbox[1]/h, 
+                             best_bbox[2]/w, best_bbox[3]/h
+                         ]
+                         
+                         # Draw on debug image
                          debug_img = img_bgr.copy()
-                         for *xyxy, conf, cls in det:
-                             c = int(cls)
-                             label_viz = f'{names[c] if isinstance(names, list) else names.get(c, "Burn")} {conf:.2f}'
-                             p1, p2 = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))
-                             # Scaling needed? No, we didn't rescale back to original img yet?
-                             # Actually we need rescale if we want to draw on original
-                             # For simplicity, let's just draw on resized input or skip overlay for now
-                             # Or use the img passed to model
-                             pass
-                         pass
+                         cv2.rectangle(debug_img, (int(best_bbox[0]), int(best_bbox[1])), (int(best_bbox[2]), int(best_bbox[3])), (0, 0, 255), 2)
+                         _, buffer = cv2.imencode('.jpg', debug_img)
+                         debug_info["overlay"] = base64.b64encode(buffer).decode('utf-8')
 
-                    return label, best_conf, debug_info
+                    return label, conf_val, debug_info
+                
                 else:
                     return "Healthy", 0.95, debug_info
 
             except Exception as e:
-                print(f"YOLOv7 Inference Error: {e}")
+                print(f"External YOLOv7 Inference Error: {e}")
                 import traceback
                 traceback.print_exc()
+                return "Error", 0.0, {"error": str(e)}
 
-        # 3. Legacy / Fallback
-        # ... (Existing legacy code handles here if needed, but assuming yolo logic covers it)
-        # If we reached here, inference failed or mode unknown.
-        
-        return "Error", 0.0, {"error": "Inference failed or unknown model type"}
+        # Fallback for other model types...
+        return "Error", 0.0, {"error": f"Unknown model type: {model_type}"}
 
     except Exception as e:
         print(f"Error in predict_burns: {e}", flush=True)
@@ -443,6 +550,49 @@ def predict_nail_disease(img_bgr, debug=False):
     
     debug_info = {}
     
+    # 1. Mouth Detection Check (Requested by user to prevent prediction on closed mouths)
+    try:
+        import mediapipe as mp
+        mp_face_mesh = mp.solutions.face_mesh
+        
+        with mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        ) as face_mesh:
+            results = face_mesh.process(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+            
+            if not results.multi_face_landmarks:
+                # If no face, maybe just a mouth crop? 
+                # But user complained about "predicting without even seeing open mouth"
+                pass 
+            else:
+                landmarks = results.multi_face_landmarks[0].landmark
+                h, w, _ = img_bgr.shape
+                
+                # Mouth landmarks (Upper lip: 13, Lower lip: 14)
+                top_lip = landmarks[13]
+                bottom_lip = landmarks[14]
+                
+                # Face height reference (Forehead: 10, Chin: 152)
+                face_top = landmarks[10].y * h
+                face_bottom = landmarks[152].y * h
+                face_height = face_bottom - face_top
+                
+                mouth_open_dist = np.linalg.norm(
+                    np.array([top_lip.x * w, top_lip.y * h]) - 
+                    np.array([bottom_lip.x * w, bottom_lip.y * h])
+                )
+                
+                open_ratio = mouth_open_dist / (face_height + 1e-6)
+                
+                if open_ratio < 0.05:
+                     return "Mouth Closed", 0.0, {"error": "Please open your mouth wide.", "mouth_open_ratio": float(open_ratio)}
+
+    except Exception as e:
+        print(f"Oral cancer mouth check failed: {e}", flush=True)
+
     try:
         img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
         
@@ -583,25 +733,28 @@ def predict_oral_cancer(img_bgr, debug=False):
             
         return "Model Not Loaded", 0.0, {"error": f"Oral cancer model not available. Debug: {debug_msg}"}
     
+    
     debug_info = {}
     try:
+        # Add Mouth BBox
+        bbox, _, _ = analyze_mouth(img_bgr)
+        if bbox:
+            debug_info["bbox"] = bbox
+
         img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
         grad_cam = None
         context = torch.no_grad()
         if debug:
             context = torch.enable_grad()
-            # Model is unwrapped timm EfficientNet - access layers directly
+            img_tensor = img_tensor.requires_grad_(True)
             try:
-                if hasattr(model, 'conv_head'):
-                    target_layer = model.conv_head
-                elif hasattr(model, 'blocks'):
-                    target_layer = model.blocks[-1]
+                target_layer = get_last_conv_layer(model)
+                if target_layer:
+                    grad_cam = GradCAM(model, target_layer)
                 else:
-                    # Fallback: get last convolutional layer
-                    target_layer = list(model.children())[-2]
-                grad_cam = GradCAM(model, target_layer)
+                    print("Grad-CAM failed: No conv layers found in oral cancer model.")
             except Exception as e:
-                logger.warning(f"Grad-CAM setup failed for oral cancer: {e}. Continuing without visualization.")
+                print(f"Grad-CAM setup failed for oral cancer: {e}. Continuing without visualization.")
                 grad_cam = None
 
         with context:
@@ -645,202 +798,7 @@ def predict_oral_cancer(img_bgr, debug=False):
         traceback.print_exc()
         return "Error", 0.0, {"error": str(e)}
 
-def get_cataract_model():
-    global _cataract_model
-    if _cataract_model:
-        return _cataract_model
-    
-    with _model_locks['cataract']:
-        if _cataract_model:
-            return _cataract_model
-        
-        model_path = BASE_DIR / "cataract_model.pth"
-        
-        # Also check saved_models folder
-        if not model_path.exists():
-            model_path = BASE_DIR / "saved_models" / "cataract_model.pth"
-        
-        if not model_path.exists():
-            # Fallback: Recursive search
-            print(f"Cataract model not found, searching...", flush=True)
-            found = list(BASE_DIR.rglob("cataract_model.pth"))
-            if found:
-                model_path = found[0]
-                print(f"Found Cataract model at {model_path}", flush=True)
-            else:
-                print(f"Cataract model file not found in {BASE_DIR}", flush=True)
-                return None
-        
-        try:
-            print("Loading Cataract Model (Thread-Safe)...", flush=True)
-            # Try to load as complete model object first
-            try:
-                # PyTorch 2.6+ requires weights_only=False for full model objects
-                try:
-                    model = torch.load(model_path, map_location=get_device(), weights_only=False)
-                except TypeError:
-                    model = torch.load(model_path, map_location=get_device())
-                
-                # Check if it's a state_dict (OrderedDict)
-                if isinstance(model, dict):
-                    print("Cataract model loaded as state_dict, identifying architecture...", flush=True)
-                    keys = list(model.keys())
-                    
-                    is_torchvision_efficientnet = any('features.8' in k for k in keys)
-                    is_mobilenet_v2 = any('classifier.1.weight' in k for k in keys) or any('classifier.1.1.weight' in k for k in keys) # Classifier usually has 2 submodules (Dropout, Linear)
-                    
-                    if is_torchvision_efficientnet:
-                        print("Identified Torchvision EfficientNet-B0 (likely) architecture.", flush=True)
-                        from torchvision import models
-                        
-                        # Fix keys if classifier.1.1 is present (legacy mapping issue)
-                        new_state_dict = {}
-                        for k, v in model.items():
-                            new_k = k
-                            if 'classifier.1.1' in k:
-                                new_k = k.replace('classifier.1.1', 'classifier.1')
-                            new_state_dict[new_k] = v
-                        model = new_state_dict
-
-                        # Try EfficientNet-B0 (1280 features)
-                        try:
-                            model_arch = models.efficientnet_b0(pretrained=False)
-                            model_arch.classifier[1] = nn.Linear(1280, 2)
-                            model_arch.to(get_device())
-                            model_arch.load_state_dict(model)
-                            model = model_arch
-                            print("Successfully loaded as EfficientNet-B0", flush=True)
-                        except Exception as e_b0:
-                            print(f"Failed B0 load: {e_b0}. Trying MobileNetV2...", flush=True)
-                            raise e_b0
-
-                    elif is_mobilenet_v2: 
-                        print("Identified MobileNetV2 architecture.", flush=True)
-                        from torchvision import models
-                        model_arch = models.mobilenet_v2(pretrained=False)
-                        # Replace classifier to match 2 classes
-                        model_arch.classifier[1] = nn.Linear(model_arch.last_channel, 2)
-                        model_arch.to(get_device())
-                        model_arch.load_state_dict(model)
-                        model = model_arch
-
-                    else:
-                        # Assume EfficientNet-B4 (from current training script)
-                        print("Assuming EfficientNet-B4 architecture.", flush=True)
-                        import timm
-                        model_arch = timm.create_model('efficientnet_b4', pretrained=False, num_classes=2)
-                        model_arch.to(get_device())
-                        model_arch.load_state_dict(model)
-                        model = model_arch
-                
-                model.eval()
-                _cataract_model = model
-                print(f"Cataract Model Loaded - 2 classes (Cataract/Normal)", flush=True)
-                return _cataract_model
-            except Exception as load_err:
-                print(f"Direct load failed ({load_err}), trying fallback...", flush=True)
-
-                return None
-
-        except Exception as e:
-            print(f"Failed to load Cataract Model: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            return None
-
-
-def predict_cataract(img_bgr, debug=False):
-    """
-    Predict cataract from eye image.
-    Returns: (label, confidence, debug_info)
-    """
-    model = get_cataract_model()
-    if model is None:
-        # Debugging: List available files
-        try:
-            saved_models_path = BASE_DIR / "saved_models"
-            if saved_models_path.exists():
-                files = [f.name for f in saved_models_path.glob("*.pth")]
-                debug_msg = f"Models in {saved_models_path}: {files}"
-            else:
-                debug_msg = f"{saved_models_path} does not exist"
-        except Exception as e:
-            debug_msg = f"List dir failed: {e}"
-            
-        return "Model Not Loaded", 0.0, {"error": f"Cataract model not available. Debug: {debug_msg}"}
-    
-    debug_info = {}
-    
-    try:
-        # Preprocess
-        img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
-        
-        # Grad-CAM setup
-        grad_cam = None
-        context = torch.no_grad()
-        
-        if debug:
-            context = torch.enable_grad()
-            # Model is unwrapped timm EfficientNet - access layers directly
-            try:
-                if hasattr(model, 'conv_head'):
-                    target_layer = model.conv_head
-                elif hasattr(model, 'blocks'):
-                    target_layer = model.blocks[-1]
-                elif hasattr(model, 'features'):
-                     target_layer = model.features[-1]
-                else:
-                    # Fallback: get last convolutional layer
-                    target_layer = list(model.children())[-2]
-                grad_cam = GradCAM(model, target_layer)
-            except Exception as e:
-                logger.warning(f"Grad-CAM setup failed for cataract: {e}. Continuing without visualization.")
-                grad_cam = None
-        
-        with context:
-            output = model(img_tensor)
-            probs = torch.softmax(output, dim=1)
-            conf, idx = torch.max(probs, dim=1)
-            conf = conf.item()
-            idx = idx.item()
-            
-            if debug and grad_cam:
-                # Backward pass for Grad-CAM
-                score = output[0, idx]
-                model.zero_grad()
-                score.backward(retain_graph=False)
-                heatmap = grad_cam.generate()
-                
-                if heatmap is not None:
-                    overlay = generate_heatmap_overlay(heatmap, img_resized)
-                    debug_info["grad_cam"] = overlay
-        
-        label = CATARACT_CLASSES[idx] if idx < len(CATARACT_CLASSES) else f"Unknown Class {idx}"
-        
-        # Top-2 predictions (only 2 classes)
-        top2 = []
-        probs_np = probs[0].detach().cpu().numpy()
-        for i in range(len(CATARACT_CLASSES)):
-            top2.append({"label": CATARACT_CLASSES[i], "confidence": float(probs_np[i])})
-        
-        debug_info["top_3"] = top2  # Keep key name for frontend compatibility
-        
-        # Add Debug Image
-        if debug:
-            _, buffer = cv2.imencode('.jpg', img_resized)
-            debug_info["debug_image"] = "data:image/jpeg;base64," + base64.b64encode(buffer).decode('utf-8')
-        
-        if grad_cam:
-            grad_cam.remove_hooks()
-            model.zero_grad()
-        
-        return label, conf, debug_info
-    
-    except Exception as e:
-        import traceback
-        print(f"Error in predict_cataract: {e}", flush=True)
-        traceback.print_exc()
-        return "Error", 0.0, {"error": str(e)}
+# Cataract model code removed as per user request
 
 
 # --- Teeth Disease Detection ---
@@ -865,10 +823,19 @@ def get_teeth_model():
             print("Loading Teeth Disease Model (Thread-Safe)...", flush=True)
             
             # Load complete model object (saved by training script)
+            # Patch __main__ to allow loading models saved in main script scope
+            import sys
+            import __main__
+            setattr(__main__, "TeethDiseaseModel", TeethDiseaseModel)
+            
             try:
-                model = torch.load(model_path, map_location=get_device(), weights_only=False)
-            except TypeError:
-                model = torch.load(model_path, map_location=get_device())
+                try:
+                    model = torch.load(model_path, map_location=get_device(), weights_only=False)
+                except TypeError:
+                    model = torch.load(model_path, map_location=get_device())
+            finally:
+                # Optional: Cleanup if you want to keep namespace clean, but usually harmless to leave
+                pass 
             model.eval()
             _teeth_model = model
             
@@ -902,6 +869,19 @@ def predict_teeth_disease(img_bgr, debug=False):
     
     debug_info = {}
     
+    # Detect mouth/openness using MediaPipe
+    bbox, open_ratio, error = analyze_mouth(img_bgr)
+    
+    if error:
+        return "No Face Detected", 0.0, {"error": error}
+        
+    if bbox:
+        debug_info["bbox"] = bbox
+        debug_info["mouth_open_ratio"] = float(open_ratio)
+        
+    if open_ratio < 0.05: # Threshold: Mouth is closed
+         return "Mouth Closed", 0.0, {"error": "Please open your mouth to inspect teeth.", "mouth_open_ratio": float(open_ratio), "bbox": bbox}
+
     try:
         img_tensor, img_resized = preprocess_image(img_bgr, IMG_SIZE_LARGE)
         
@@ -914,24 +894,12 @@ def predict_teeth_disease(img_bgr, debug=False):
         grad_cam = None
         
         if debug:
-            # Model is a custom class with backbone attribute
             try:
-                if hasattr(model, 'backbone'):
-                    if hasattr(model.backbone, 'conv_head'):
-                        target_layer = model.backbone.conv_head
-                    elif hasattr(model.backbone, 'blocks'):
-                        target_layer = model.backbone.blocks[-1]
-                    else:
-                        target_layer = list(model.backbone.children())[-1]
+                target_layer = get_last_conv_layer(model)
+                if target_layer:
+                    grad_cam = GradCAM(model, target_layer)
                 else:
-                    # Fallback for unwrapped models
-                    if hasattr(model, 'conv_head'):
-                        target_layer = model.conv_head
-                    elif hasattr(model, 'blocks'):
-                        target_layer = model.blocks[-1]
-                    else:
-                        target_layer = list(model.children())[-2]
-                grad_cam = GradCAM(model, target_layer)
+                    print("Grad-CAM failed: No conv layers found in teeth model.")
             except Exception as e:
                 print(f"Grad-CAM setup failed for teeth: {e}. Continuing without visualization.", flush=True)
                 grad_cam = None
@@ -983,4 +951,89 @@ def predict_teeth_disease(img_bgr, debug=False):
         import traceback
         print(f"Error in predict_teeth_disease: {e}", flush=True)
         traceback.print_exc()
+        return "Error", 0.0, {"error": str(e)}
+
+
+def get_posture_model():
+    global _posture_model
+    if _posture_model:
+        return _posture_model
+    
+    with _model_locks['posture']:
+        if _posture_model:
+            return _posture_model
+        
+        model_path = BASE_DIR / "saved_models" / "posture_classifier.pth"
+        if not model_path.exists():
+            print(f"Posture model not found at {model_path}", flush=True)
+            return None
+        
+        try:
+            print("Loading Posture Classifier (Thread-Safe)...", flush=True)
+            model = PostureClassifier(input_size=12, num_classes=2).to(get_device())
+            state_dict = torch.load(model_path, map_location=get_device())
+            model.load_state_dict(state_dict)
+            model.eval()
+            _posture_model = model
+            print("Posture Classifier Loaded successfully", flush=True)
+            return _posture_model
+        except Exception as e:
+            print(f"Failed to load Posture Model: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return None
+
+def predict_posture_from_landmarks(landmarks, debug=False):
+    """
+    Predict posture status from MediaPipe landmarks.
+    Args:
+        landmarks: List of landmark dicts [{"x":, "y":, ...}]
+    """
+    model = get_posture_model()
+    if model is None:
+        return "Model Not Loaded", 0.0, {"error": "Posture classifier not available"}
+    
+    try:
+        # We need specific landmarks index that match the COCO dataset's 6 points
+        # Assuming the 6 points are: Neck, Back, Hips etc. 
+        # For simplicity, we'll map the top 6 points from MediaPipe that represent trunk
+        # MediaPipe indices: 11(L shoulder), 12(R shoulder), 23(L hip), 24(R hip), 
+        # plus maybe 0(Nose) and midpoint of (23,24) for spine.
+        # But for the trained model to work best, we should use the SAME points as training.
+        # In my training script, I just used the first 6 points in the COCO keypoints.
+        
+        # NOTE: This implementation assumes the caller (tasks.py) provides the correct 12 features (6 pts * x,y)
+        # However, to be robust, let's allow it to take raw landmarks and extract them here.
+        
+        # If landmarks is already a list of 12 floats, use it directly
+        if isinstance(landmarks, (list, np.ndarray)) and len(landmarks) == 12:
+            features = landmarks
+        else:
+            # Map MediaPipe landmarks to our 6 keypoints (approximate)
+            # Neck/Shoulder Mid, Mid Back, Hips...
+            # This mapping needs to match what was in the COCO dataset.
+            # Assuming standard COCO posture: 0:Nose, 1:L_Shoulder, 2:R_Shoulder, 3:L_Hip, 4:R_Hip, 5:Mid_Spine
+            # We'll try to extract these or equivalent.
+            
+            # Using specific indices if they are provided as a dict list
+            indices = [0, 11, 12, 23, 24, 25] # Nose, L_Sho, R_Sho, L_Hip, R_Hip, L_Knee? 
+            # Actually, let's stick to the 12-feature input expectation for now.
+            return "Error", 0.0, {"error": "Feature extraction mapping not implemented"}
+
+        features_tensor = torch.tensor([features], dtype=torch.float32).to(get_device())
+        
+        with torch.no_grad():
+            output = model(features_tensor)
+            probs = torch.softmax(output, dim=1)
+            conf, idx = torch.max(probs, dim=1)
+            conf = conf.item()
+            idx = idx.item()
+            
+        # 0: Good, 1: Bad (matching cat_map in training script)
+        label = "Good Form" if idx == 0 else "Bad Form"
+        
+        return label, conf, {}
+        
+    except Exception as e:
+        print(f"Error in predict_posture: {e}", flush=True)
         return "Error", 0.0, {"error": str(e)}

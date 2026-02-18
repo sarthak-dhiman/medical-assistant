@@ -16,7 +16,7 @@ WORKDIR /app
 
 # Install Python Deps
 COPY web_app/backend/requirements_web.txt .
-RUN pip install --no-cache-dir -r requirements_web.txt
+RUN pip install --no-cache-dir --retries 10 --timeout 1000 -r requirements_web.txt
 
 # Force Cache Bust
 ENV CACHEBUST=2

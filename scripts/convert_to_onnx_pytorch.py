@@ -6,15 +6,17 @@ import json
 import sys
 from pathlib import Path
 
-# Import architectures from inference_pytorch (or redefine them if imports are tricky)
-# To avoid import issues with relative paths if running as script, we'll just redefine/import carefully.
+# Import architectures directly from root files
 try:
-    from inference import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
-    from inference import BurnsModel, NailDiseaseModel, CataractModel
+    from inference_pytorch import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
+    from inference_new_models import BurnsModel, NailDiseaseModel, CataractModel
 except ImportError:
-    # Fallback: redefine if inference_pytorch isn't in path
-    print("WARNING: Could not import architectures. Ensure inference scripts are in path.")
-    exit(1)
+    # Fallback: ensure current directory and parent are in sys.path
+    import sys
+    from pathlib import Path
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from inference_pytorch import JaundiceModel, JaundiceBodyModel, SkinDiseaseModel, IMG_SIZE, SCLERA_SIZE
+    from inference_new_models import BurnsModel, NailDiseaseModel, CataractModel
 
 # Force CPU for export to avoid VRAM conflict with training
 DEVICE = torch.device('cpu')

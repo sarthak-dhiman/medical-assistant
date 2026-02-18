@@ -1,17 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const ResultDisplay = ({ result, mode, isNerdMode }) => {
     // Check what we receive
     if (isNerdMode && result) {
-        console.log("🤓 Nerd Mode Data:", result.debug_info, "Mode:", mode);
+        console.log("🤓 Nerd Mode Result:", {
+            mode,
+            label: result.label,
+            bbox: result.bbox,
+            debug_info_keys: Object.keys(result.debug_info || {})
+        });
     }
-    const [viewMode, setViewMode] = useState(() => {
-        // Auto-select HEATMAP if no masks but grad_cam exists (e.g. Nail/Burns)
+    const [viewMode, setViewMode] = useState('MASKS');
+
+    // Auto-switch viewMode only when the target mode changes
+    useEffect(() => {
         if (result?.debug_info?.grad_cam && !result?.debug_info?.masks) {
-            return 'HEATMAP';
+            setViewMode('HEATMAP');
+        } else {
+            setViewMode('MASKS');
         }
-        return 'MASKS';
-    });
+    }, [mode]); // Triggers on mode change, not every result update
     if (!result) return null;
 
     if (result.status === 'error') {
@@ -38,7 +46,7 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
 
         return (
             <div
-                className={`absolute border-2 ${color} rounded-lg flex flex-col items-start`}
+                className={`absolute border-4 ${color} rounded-lg flex flex-col items-start z-50`}
                 style={{
                     left: `${x1 * 100}%`,
                     top: `${y1 * 100}%`,
@@ -46,7 +54,11 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                     height: `${height * 100}%`,
                 }}
             >
-                <div className={`-mt-6 px-2 py-0.5 text-xs font-bold text-black ${color.replace('border', 'bg')} rounded`}>
+                <div className={`px-2 py-0.5 text-[10px] font-bold text-black ${color.replace('border', 'bg')} rounded shadow-lg`}
+                    style={{
+                        transform: y1 < 0.1 ? 'translateY(100%)' : 'translateY(-110%)',
+                        whiteSpace: 'nowrap'
+                    }}>
                     {label} {conf && `(${Math.round(conf * 100)}%)`}
                 </div>
             </div>
@@ -130,6 +142,22 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                         </div>
                     </div>
 
+                    {/* Result Info */}
+                    <div className="mb-3 space-y-1">
+                        <div className="flex justify-between">
+                            <span className="text-gray-500 italic">Label:</span>
+                            <span className="text-white font-bold">{result.label}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-500 italic">Task/Debug Keys:</span>
+                            <span className="text-cyan-400">[{Object.keys(result).slice(0, 3).join(',')}] / [{Object.keys(result.debug_info || {}).slice(0, 3).join(',')}]</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-500 italic">Raw BBox:</span>
+                            <span className="text-yellow-400">{result.bbox ? `[${result.bbox.map(b => b.toFixed(2)).join(',')}]` : 'None'}</span>
+                        </div>
+                    </div>
+
                     {/* Color Stats */}
                     {result.debug_info.color_stats && (
                         <div className="mb-3">
@@ -186,26 +214,30 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                             </div>
                         </div>
                     )}
-                </div>
+                </div >
             )}
 
             {/* DEBUG: Show Processed Eye Input (Only in Nerd Mode) */}
-            {isNerdMode && result.debug_image && (
-                <div className="absolute bottom-20 right-4 w-24 h-24 bg-black/50 border border-white/20 rounded-lg overflow-hidden backdrop-blur-sm shadow-lg z-50">
-                    <img src={result.debug_image} alt="Debug AI View" className="w-full h-full object-contain" />
-                    <span className="absolute bottom-0 left-0 w-full text-[9px] font-bold text-center bg-black/80 text-white py-0.5">AI Input View</span>
-                </div>
-            )}
+            {
+                isNerdMode && result.debug_image && (
+                    <div className="absolute bottom-20 right-4 w-24 h-24 bg-black/50 border border-white/20 rounded-lg overflow-hidden backdrop-blur-sm shadow-lg z-50">
+                        <img src={result.debug_image} alt="Debug AI View" className="w-full h-full object-contain" />
+                        <span className="absolute bottom-0 left-0 w-full text-[9px] font-bold text-center bg-black/80 text-white py-0.5">AI Input View</span>
+                    </div>
+                )
+            }
 
             {/* Contextual Warnings (Blurry, etc) */}
-            {warning && (
-                <div className="absolute top-24 left-1/2 transform -translate-x-1/2 bg-yellow-900/80 border border-yellow-500/50 text-yellow-100 px-4 py-2 rounded-lg backdrop-blur-sm flex items-center gap-2 shadow-lg z-40">
-                    <svg className="w-5 h-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    <span className="text-xs font-medium">{warning}</span>
-                </div>
-            )}
+            {
+                warning && (
+                    <div className="absolute top-24 left-1/2 transform -translate-x-1/2 bg-yellow-900/80 border border-yellow-500/50 text-yellow-100 px-4 py-2 rounded-lg backdrop-blur-sm flex items-center gap-2 shadow-lg z-40">
+                        <svg className="w-5 h-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <span className="text-xs font-medium">{warning}</span>
+                    </div>
+                )
+            }
         </>
     );
 };

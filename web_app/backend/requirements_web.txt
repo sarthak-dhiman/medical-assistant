@@ -2,22 +2,23 @@ fastapi
 uvicorn[standard]
 celery[redis]
 redis
+flower
 python-multipart
-requests
+# Explicit dependencies to satisfy checks
+requests>=2.32.0
+setuptools>=70.0.0
+urllib3>=2.2.0
 opencv-python-headless
 pillow
 transformers<4.46  # Pin to version compatible with PyTorch 2.2
-torch
-torchvision
+# Pinned to match pytorch/pytorch:2.2.0 base image exactly
+torch==2.2.0
+torchvision==0.17.0 
 timm
 scikit-learn
-tqdm
-numpy<2  # PyTorch 2.2.0 requires NumPy 1.x
+tqdm>=4.66.0
+numpy==1.23.5  # Sweet spot for legacy YOLO + modern transformers
 mediapipe==0.10.9
 protobuf<4.0.0
-flower
-nvidia-ml-py3  # For GPU monitoring
-ultralytics  # For YOLO-based Burns model
-pandas
-matplotlib
-seaborn
+ultralytics==8.2.10  # Pinned to avoid auto-update bugs
+yolov5       # For legacy Burns model loading

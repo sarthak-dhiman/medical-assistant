@@ -63,21 +63,29 @@ async def health_check():
     """
     Check if AI Worker is ready and models are loaded.
     """
+    from fastapi import Response, status
     from .tasks import check_model_health
     try:
-        # Wait up to 2 seconds for worker response
-        # If worker is busy loading models, this might timeout initially
+        # Wait up to 12 seconds for worker response (Docker timeout is 15s)
         task = check_model_health.delay()
-        # Increase timeout to 9.0s to allow worker startup (Docker timeout is 10s)
-        result = task.get(timeout=9.0)
+        result = task.get(timeout=12.0)
         
         if result.get("ready"):
             return {"status": "ready", "models_ready": True, "details": result}
         else:
-            return {"status": "loading", "models_ready": False, "details": result}
+            # Return 503 Service Unavailable during loading
+            return Response(
+                content='{"status": "loading", "models_ready": False}',
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                media_type="application/json"
+            )
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {"status": "not_ready", "models_ready": False, "error": str(e)}
+        logger.warning(f"Health check warmup (pending): {e}")
+        return Response(
+            content=f'{{"status": "not_ready", "models_ready": False, "error": "{str(e)}"}}',
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json"
+        )
 
 @app.post("/predict")
 async def predict_endpoint(request: PredictRequest):
@@ -92,6 +100,22 @@ async def predict_endpoint(request: PredictRequest):
         return {"task_id": task.id, "status": "processing"}
     except Exception as e:
         logger.error(f"Failed to enqueue task: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@app.post("/predict/auto")
+async def predict_auto_endpoint(request: PredictRequest):
+    """
+    Enqueue an image for automatic diagnostic routing.
+    Ignores 'mode' in request (automatically determined).
+    """
+    from .tasks import diagnostic_gateway_task
+    try:
+        # Enqueue task
+        task = diagnostic_gateway_task.delay(request.image, request.debug)
+        logger.info(f"Auto-Diagnostic Task enqueued: {task.id}")
+        return {"task_id": task.id, "status": "processing", "mode": "AUTO"}
+    except Exception as e:
+        logger.error(f"Failed to enqueue auto-task: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/result/{task_id}")

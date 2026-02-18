@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import WebcamCapture from '../WebcamCapture'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`
 
 const DetectionPage = () => {
     const [activeMode, setActiveMode] = useState('JAUNDICE_BODY')

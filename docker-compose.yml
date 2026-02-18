@@ -12,6 +12,7 @@ services:
     build:
       context: .
       dockerfile: web_app/backend/Dockerfile
+    image: diseaseprediction-backend:latest
     ports:
       - "8000:8000"
     command: uvicorn web_app.backend.main:app --host 0.0.0.0 --port 8000
@@ -22,6 +23,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Security: Allow frontend access
       - ALLOWED_ORIGINS=http://localhost:5173
+      - ALLOW_ALL_ORIGINS=True
       # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -35,11 +37,11 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
+    restart: always
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
-
-      interval: 30s
-      timeout: 30s
+      interval: 45s
+      timeout: 15s
       retries: 5
       start_period: 120s
     depends_on:
@@ -49,10 +51,14 @@ services:
 
   # 3. AI Worker
   worker:
-    build:
-      context: .
-      dockerfile: web_app/backend/Dockerfile
-    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1
+    image: diseaseprediction-backend:latest
+    restart: always
+    depends_on:
+      redis:
+        condition: service_started
+      backend:
+        condition: service_started
+    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=4
     volumes:
       - ./saved_models:/app/saved_models
       - ./external:/app/external
@@ -73,17 +79,14 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
-    depends_on:
-      - redis
     networks:
       - app-network
 
   # 4. Monitoring (Flower)
   flower:
-    build:
-      context: .
-      dockerfile: web_app/backend/Dockerfile
+    image: diseaseprediction-backend:latest
     command: celery -A web_app.backend.celery_app flower --port=5555 --basic_auth=admin:${FLOWER_PASSWORD:-changeme123}
+    restart: on-failure
     ports:
       - "5555:5555"
     environment:
@@ -97,9 +100,7 @@ services:
 
   # 5. GPU Monitor (Sidecar)
   gpu-monitor:
-    build:
-      context: .
-      dockerfile: web_app/backend/Dockerfile
+    image: diseaseprediction-backend:latest
     command: python web_app/backend/gpu_monitor.py
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -114,7 +115,9 @@ services:
               capabilities: [ gpu ]
     networks:
       - app-network
-    restart: unless-stopped
+    profiles:
+      - monitor
+    restart: always
 
   # 6. Frontend
   frontend:
