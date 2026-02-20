@@ -317,8 +317,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 return "Ensure good lighting. Show face or skin clearly. Best for babies.";
             case "SKIN_DISEASE":
                 return "Focus camera on affected area. Keep steady.";
-            case "BURNS":
-                return "Ensure good lighting. Focus on the burn area.";
             case "NAIL_DISEASE":
                 return "Focus specifically on the affected nail.";
             case "CATARACT":
@@ -471,7 +469,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
                             <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-2">AI Diagnosis</p>
                             <div className="flex items-center justify-between gap-4">
-                                <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease') || (result.label || '').includes('Burns')
+                                <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
                                     ? 'text-red-400' : 'text-green-400'
                                     }`}>
                                     {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}

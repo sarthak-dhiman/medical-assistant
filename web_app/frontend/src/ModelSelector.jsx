@@ -33,16 +33,6 @@ const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
             borderColor: 'border-rose-500/20'
         },
         {
-            id: 'BURNS',
-            label: 'Burns Detection',
-            shortLabel: 'Burns',
-            icon: <Stethoscope className="w-4 h-4" />,
-            color: 'from-red-500 to-orange-700',
-            textColor: 'text-red-400',
-            bgColor: 'bg-red-500/10',
-            borderColor: 'border-red-500/20'
-        },
-        {
             id: 'NAIL_DISEASE',
             label: 'Nail Disease',
             shortLabel: 'Nail',

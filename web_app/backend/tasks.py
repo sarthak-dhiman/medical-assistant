@@ -10,6 +10,10 @@ from .config import settings
 import mediapipe as mp
 
 import datetime
+try:
+    from mmpose.apis import MMPoseInferencer
+except ImportError:
+    MMPoseInferencer = None
 
 # --- Performance & Stability ---
 # Force MediaPipe to CPU to avoid EGL errors in Docker with NVIDIA GPUS
@@ -729,111 +733,117 @@ def _process_cataract(frame, debug):
 # --- Diagnostic Gateway ---
 
 # Lazy initialization
-mp_pose = None
-pose_detector = None
+mmpose_inferencer = None
 
 def _process_posture(frame, w, h, debug, result):
-    """Process posture detection using MediaPipe Pose."""
-    try:
-        # Lazy initialization
-        global mp_pose, pose_detector
-        if 'mp_pose' not in globals() or mp_pose is None:
-            try:
-                mp_pose = mp.solutions.pose
-                # Use model_complexity=2 for better accuracy (especially side views)
-                # static_image_mode=True is correct because we are processing discrete frames from frontend
-                pose_detector = mp_pose.Pose(
-                    static_image_mode=True, 
-                    model_complexity=2, 
-                    enable_segmentation= False,
-                    min_detection_confidence=0.3
-                )
-                logger.info("MediaPipe Pose Model Initialized (Complexity=2)")
-            except Exception as e:
-                    logger.error(f"Failed to init MediaPipe Pose: {e}")
-                    return {"status": "error", "error": "Pose model init failed"}
-        
-        # Check if detector is actually ready (in case mp_pose init worked but detector didn't)
-        if pose_detector is None:
-             return {"status": "error", "error": "Pose detector not initialized"}
+    """Process posture detection using MediaPipe Pose.
 
+    Returns all 33 MediaPipe landmarks for frontend skeleton drawing,
+    while using a 12-point subset for the posture classifier.
+    """
+    try:
+        mp_pose = mp.solutions.pose
+
+        # 12-point subset used for the classifier (matches training format)
+        # MediaPipe indices: nose, l/r shoulder, l/r elbow, l/r hip, l/r knee, l/r ankle, mouth_left
+        POSE_INDICES = [0, 11, 12, 13, 14, 23, 24, 25, 26, 27, 28, 9]
+        FEATURE_SIZE = 24  # 12 * 2
 
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = pose_detector.process(img_rgb)
-        
+
+        with mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            min_detection_confidence=0.4,
+        ) as pose:
+            mp_result = pose.process(img_rgb)
+
         debug_info = {}
-        
-        if results.pose_landmarks:
-            # Extract landmarks for frontend rendering (smoother)
-            landmarks = []
-            for lm in results.pose_landmarks.landmark:
-                landmarks.append({
-                    "x": lm.x,
-                    "y": lm.y,
-                    "z": lm.z,
-                    "visibility": lm.visibility
-                })
-            
-            result["landmarks"] = landmarks
-                
-            # --- Custom Classifier Integration ---
-            # Indices for 6 COCO-like points: 
-            # 0:Nose, 11:L_Sho, 12:R_Sho, 23:L_Hip, 24:R_Hip, 25:L_Knee?
-            # Actually let's use the first 5 and compute Spine Mid for 6th.
-            # Match the order in training script (first 6 annotations).
-            
-            try:
-                # Extract 12 features (6 pts * x,y)
-                # 0: Nose (mp 0)
-                # 1: L Shoulder (mp 11)
-                # 2: R Shoulder (mp 12)
-                # 3: L Hip (mp 23)
-                # 4: R Hip (mp 24)
-                # 5: Spine/Mid Trunk (midpoint of L/R shoulder and L/R hip)
-                
-                pt_nose = landmarks[0]
-                pt_lsho = landmarks[11]
-                pt_rsho = landmarks[12]
-                pt_lhip = landmarks[23]
-                pt_rhip = landmarks[24]
-                
-                # Spine Mid Calculation
-                spine_x = (pt_lsho['x'] + pt_rsho['x'] + pt_lhip['x'] + pt_rhip['x']) / 4.0
-                spine_y = (pt_lsho['y'] + pt_rsho['y'] + pt_lhip['y'] + pt_rhip['y']) / 4.0
-                
-                features = [
-                    pt_nose['x'], pt_nose['y'],
-                    pt_lsho['x'], pt_lsho['y'],
-                    pt_rsho['x'], pt_rsho['y'],
-                    pt_lhip['x'], pt_lhip['y'],
-                    pt_rhip['x'], pt_rhip['y'],
-                    spine_x, spine_y
-                ]
-                
-                label, conf, _ = inference_service.predict_posture(features, debug=debug)
-                
-            except Exception as pe:
-                logger.error(f"Posture classification failed: {pe}")
-                label = "Posture Detected (Classification Failed)"
-                conf = 0.5
-            
+
+        if mp_result.pose_landmarks is None:
             result.update({
-                "label": label,
-                "confidence": conf,
-                "debug_info": debug_info
-            })
-        else:
-             result.update({
                 "label": "No Posture Detected",
                 "confidence": 0.0,
-                "debug_info": debug_info
+                "debug_info": debug_info,
             })
+            return result
+
+        lm = mp_result.pose_landmarks.landmark
+
+        # --- ALL 33 landmarks for frontend drawing ---
+        all_landmarks = [
+            {
+                "x": float(pt.x),
+                "y": float(pt.y),
+                "z": float(getattr(pt, "z", 0.0)),
+                "visibility": float(getattr(pt, "visibility", 1.0)),
+            }
+            for pt in lm
+        ]
+        result["landmarks"] = all_landmarks  # full 33-pt array
+
+        # --- 12-point flat vector for classifier ---
+        flat_features = []
+        for idx in POSE_INDICES:
+            pt = lm[idx]
+            flat_features.append(float(pt.x))
+            flat_features.append(float(pt.y))
+
+        # Safety pad/truncate
+        if len(flat_features) < FEATURE_SIZE:
+            flat_features += [0.0] * (FEATURE_SIZE - len(flat_features))
+        else:
+            flat_features = flat_features[:FEATURE_SIZE]
+
+        try:
+            import torch
+            label, conf, _ = inference_service.predict_posture(flat_features, debug=debug)
             
+            # --- Neck Posture Heuristic ---
+            # If the model predicts "Good Form", we double-check the neck alignment
+            if "Good" in label:
+                ls = lm[11]
+                rs = lm[12]
+                nose = lm[0]
+                
+                if ls.visibility > 0.3 and rs.visibility > 0.3 and nose.visibility > 0.3:
+                    shoulder_y = (ls.y + rs.y) / 2.0
+                    shoulder_width = abs(ls.x - rs.x)
+                    
+                    if shoulder_width > 0:
+                        # Normalize vertical neck length by shoulder width to make it scale-invariant
+                        neck_ratio = (shoulder_y - nose.y) / shoulder_width
+                        
+                        # If neck_ratio is too small, head is pitched forward or down heavily
+                        # If neck_ratio is too high, head is tilted excessively backward/up
+                        # Typical upright ratio is ~0.4 to 0.75 depending on camera angle
+                        if neck_ratio < 0.35:
+                            label = "Bad Form (Neck Down)"
+                            conf = 0.85 # High confidence override
+                            debug_info["heuristic_override"] = f"neck_ratio={neck_ratio:.2f}"
+                        elif neck_ratio > 0.85:
+                            label = "Bad Form (Neck Up)"
+                            conf = 0.85
+                            debug_info["heuristic_override"] = f"neck_ratio={neck_ratio:.2f}"
+
+        except Exception as pe:
+            logger.error(f"Posture classification failed: {pe}")
+            label = "Posture Detected (Classification Failed)"
+            conf = 0.5
+
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info,
+        })
         return result
 
     except Exception as e:
         logger.error(f"Posture processing error: {e}")
         return {"status": "error", "error": f"Posture detection failed: {str(e)}"}
+
+
+
 
 
 # --- Diagnostic Gateway ---

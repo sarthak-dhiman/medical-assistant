@@ -160,7 +160,7 @@ class TeethDiseaseModel(nn.Module):
 
 
 class PostureClassifier(nn.Module):
-    def __init__(self, input_size=12, num_classes=2):
+    def __init__(self, input_size=24, num_classes=2):  # 12 keypoints * 2 (x,y) = 24
         super(PostureClassifier, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(input_size, 64),
@@ -963,19 +963,23 @@ def get_posture_model():
         if _posture_model:
             return _posture_model
         
-        model_path = BASE_DIR / "saved_models" / "posture_classifier.pth"
+        model_path = BASE_DIR / "saved_models" / "posture_classifier_mmpose.pth"
         if not model_path.exists():
-            print(f"Posture model not found at {model_path}", flush=True)
+            # Fallback: try old filename
+            model_path = BASE_DIR / "saved_models" / "posture_classifier.pth"
+        if not model_path.exists():
+            print(f"Posture model not found in saved_models", flush=True)
             return None
         
         try:
             print("Loading Posture Classifier (Thread-Safe)...", flush=True)
-            model = PostureClassifier(input_size=12, num_classes=2).to(get_device())
+            # Manual COCO annotations: 12 keypoints * 2 (x,y) = 24 features
+            model = PostureClassifier(input_size=24, num_classes=2).to(get_device())
             state_dict = torch.load(model_path, map_location=get_device())
             model.load_state_dict(state_dict)
             model.eval()
             _posture_model = model
-            print("Posture Classifier Loaded successfully", flush=True)
+            print("Posture Classifier Loaded successfully (24-feature COCO-manual)", flush=True)
             return _posture_model
         except Exception as e:
             print(f"Failed to load Posture Model: {e}", flush=True)
@@ -985,55 +989,52 @@ def get_posture_model():
 
 def predict_posture_from_landmarks(landmarks, debug=False):
     """
-    Predict posture status from MediaPipe landmarks.
+    Predict posture status from a feature vector.
     Args:
-        landmarks: List of landmark dicts [{"x":, "y":, ...}]
+        landmarks: Flat list of 24 floats (12 keypoints * x,y, normalised 0-1)
+                   Shorter lists are zero-padded; longer lists are truncated.
     """
+    FEATURE_SIZE = 24
     model = get_posture_model()
     if model is None:
         return "Model Not Loaded", 0.0, {"error": "Posture classifier not available"}
-    
-    try:
-        # We need specific landmarks index that match the COCO dataset's 6 points
-        # Assuming the 6 points are: Neck, Back, Hips etc. 
-        # For simplicity, we'll map the top 6 points from MediaPipe that represent trunk
-        # MediaPipe indices: 11(L shoulder), 12(R shoulder), 23(L hip), 24(R hip), 
-        # plus maybe 0(Nose) and midpoint of (23,24) for spine.
-        # But for the trained model to work best, we should use the SAME points as training.
-        # In my training script, I just used the first 6 points in the COCO keypoints.
-        
-        # NOTE: This implementation assumes the caller (tasks.py) provides the correct 12 features (6 pts * x,y)
-        # However, to be robust, let's allow it to take raw landmarks and extract them here.
-        
-        # If landmarks is already a list of 12 floats, use it directly
-        if isinstance(landmarks, (list, np.ndarray)) and len(landmarks) == 12:
-            features = landmarks
-        else:
-            # Map MediaPipe landmarks to our 6 keypoints (approximate)
-            # Neck/Shoulder Mid, Mid Back, Hips...
-            # This mapping needs to match what was in the COCO dataset.
-            # Assuming standard COCO posture: 0:Nose, 1:L_Shoulder, 2:R_Shoulder, 3:L_Hip, 4:R_Hip, 5:Mid_Spine
-            # We'll try to extract these or equivalent.
-            
-            # Using specific indices if they are provided as a dict list
-            indices = [0, 11, 12, 23, 24, 25] # Nose, L_Sho, R_Sho, L_Hip, R_Hip, L_Knee? 
-            # Actually, let's stick to the 12-feature input expectation for now.
-            return "Error", 0.0, {"error": "Feature extraction mapping not implemented"}
 
-        features_tensor = torch.tensor([features], dtype=torch.float32).to(get_device())
-        
+    try:
+        # Flatten nested structures
+        if isinstance(landmarks, np.ndarray):
+            flat = landmarks.flatten().tolist()
+        elif isinstance(landmarks, list) and len(landmarks) > 0 and isinstance(landmarks[0], (list, tuple, np.ndarray)):
+            flat = [float(v) for pt in landmarks for v in (pt[:2] if len(pt) >= 2 else [0.0, 0.0])]
+        elif isinstance(landmarks, list) and len(landmarks) > 0 and isinstance(landmarks[0], dict):
+            flat = []
+            for pt in landmarks:
+                flat.append(float(pt.get('x', 0.0)))
+                flat.append(float(pt.get('y', 0.0)))
+        else:
+            flat = [float(v) for v in landmarks]
+
+        # Pad or truncate to FEATURE_SIZE
+        if len(flat) < FEATURE_SIZE:
+            flat += [0.0] * (FEATURE_SIZE - len(flat))
+        else:
+            flat = flat[:FEATURE_SIZE]
+
+        if len(flat) != FEATURE_SIZE:
+            return "Error", 0.0, {"error": f"Could not build feature vector (got {len(flat)}, need {FEATURE_SIZE})"}
+
+        features_tensor = torch.tensor([flat], dtype=torch.float32).to(get_device())
+
         with torch.no_grad():
             output = model(features_tensor)
             probs = torch.softmax(output, dim=1)
             conf, idx = torch.max(probs, dim=1)
             conf = conf.item()
             idx = idx.item()
-            
-        # 0: Good, 1: Bad (matching cat_map in training script)
+
+        # 0: Good Posture, 1: Bad Posture
         label = "Good Form" if idx == 0 else "Bad Form"
-        
         return label, conf, {}
-        
+
     except Exception as e:
         print(f"Error in predict_posture: {e}", flush=True)
         return "Error", 0.0, {"error": str(e)}

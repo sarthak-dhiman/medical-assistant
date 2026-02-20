@@ -122,7 +122,7 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
 
             {/* NERD MODE: Stats Overlay */}
             {isNerdMode && result.debug_info && (
-                <div className="absolute top-20 left-4 w-64 bg-black/80 border border-purple-500/30 rounded-xl p-3 backdrop-blur-md z-50 text-[10px] font-mono text-gray-300 shadow-xl pointer-events-auto">
+                <div className="hidden md:block absolute top-20 left-4 w-64 bg-black/80 border border-purple-500/30 rounded-xl p-3 backdrop-blur-md z-50 text-[10px] font-mono text-gray-300 shadow-xl pointer-events-auto">
                     <div className="flex justify-between items-center mb-2 border-b border-purple-500/20 pb-1">
                         <h4 className="text-purple-400 font-bold uppercase tracking-wider">Nerd Stats</h4>
                         {/* View Toggle */}
@@ -177,7 +177,7 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
                         </div>
                     )}
 
-                    {/* Raw Probability (Binary Models like Burns) */}
+                    {/* Raw Probability (Binary Models) */}
                     {result.debug_info.raw_probability !== undefined && (
                         <div className="mb-3">
                             <h5 className="text-gray-400 font-bold mb-1">Raw Confidence</h5>
@@ -220,7 +220,7 @@ const ResultDisplay = ({ result, mode, isNerdMode }) => {
             {/* DEBUG: Show Processed Eye Input (Only in Nerd Mode) */}
             {
                 isNerdMode && result.debug_image && (
-                    <div className="absolute bottom-20 right-4 w-24 h-24 bg-black/50 border border-white/20 rounded-lg overflow-hidden backdrop-blur-sm shadow-lg z-50">
+                    <div className="hidden md:block absolute bottom-20 right-4 w-24 h-24 bg-black/50 border border-white/20 rounded-lg overflow-hidden backdrop-blur-sm shadow-lg z-50">
                         <img src={result.debug_image} alt="Debug AI View" className="w-full h-full object-contain" />
                         <span className="absolute bottom-0 left-0 w-full text-[9px] font-bold text-center bg-black/80 text-white py-0.5">AI Input View</span>
                     </div>
