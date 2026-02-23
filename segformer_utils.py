@@ -1,669 +1,327 @@
+"""
+segformer_utils.py  —  ONNX Runtime Edition
+=============================================
+Replaces the HuggingFace/PyTorch SegFormer inference with a lightweight
+onnxruntime session.
+
+The ONNX model was exported via:  scripts/export_segformer_to_onnx.py
+
+Input:  (1, 3, 512, 512)  float32  — ImageNet-normalised RGB
+Output: (1, 19, 128, 128) float32  — raw logits (1/4 resolution)
+
+Post-processing done in numpy/cv2:
+  1. Argmax over class dim → (1, 128, 128) uint8
+  2. Resize to original image size via cv2 (nearest-neighbour, preserves label IDs)
+"""
+
 import cv2
 import numpy as np
-import torch
-from transformers import SegformerImageProcessor, AutoModelForSemanticSegmentation
+import onnxruntime as ort
 from PIL import Image
 import sys
 import os
 import logging
+import threading
+from pathlib import Path
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Constants for edge case handling
+# ─────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────
 MIN_IMAGE_SIZE = 10
 MAX_IMAGE_SIZE = 4096
-MAX_GPU_MEMORY_GB = 8
 
+# SegFormer standard input size (must match export)
+SF_H, SF_W = 512, 512
+
+# ImageNet normalisation (same as SegformerImageProcessor defaults)
+_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(os.getcwd())
+
+ONNX_PATH = BASE_DIR / "saved_models_onnx" / "segformer.onnx"
+
+# ─────────────────────────────────────────────────────────────
+# Session (thread-safe singleton)
+# ─────────────────────────────────────────────────────────────
+_session = None
+_session_lock = threading.Lock()
+
+def _get_session() -> ort.InferenceSession | None:
+    global _session
+    if _session: return _session
+    with _session_lock:
+        if _session: return _session
+        if not ONNX_PATH.exists():
+            logger.error(
+                f"SegFormer ONNX model not found at {ONNX_PATH}. "
+                "Run scripts/export_segformer_to_onnx.py to generate it."
+            )
+            return None
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        opts.intra_op_num_threads = 4
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        try:
+            _session = ort.InferenceSession(str(ONNX_PATH), sess_options=opts, providers=providers)
+            logger.info(f"SegFormer ONNX session: {_session.get_providers()[0]}")
+        except Exception as e:
+            logger.error(f"Failed to create SegFormer ONNX session: {e}")
+            _session = None
+    return _session
+
+# ─────────────────────────────────────────────────────────────
+# Pre/Post processing helpers
+# ─────────────────────────────────────────────────────────────
+
+def _preprocess(img_bgr: np.ndarray) -> np.ndarray:
+    """BGR numpy → (1, 3, 512, 512) float32 NCHW tensor."""
+    img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (SF_W, SF_H))
+    img = img.astype(np.float32) / 255.0
+    img = (img - _MEAN) / _STD
+    return img.transpose(2, 0, 1)[np.newaxis]  # NCHW
+
+def _postprocess(logits: np.ndarray, orig_h: int, orig_w: int) -> np.ndarray:
+    """(1, 19, 128, 128) logits → (H, W) uint8 mask at original resolution."""
+    seg = np.argmax(logits[0], axis=0).astype(np.uint8)   # (128, 128)
+    # nearest-neighbour to preserve label integer values exactly
+    seg = cv2.resize(seg, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+    return seg
+
+# ─────────────────────────────────────────────────────────────
+# SegFormerWrapper — same public API as the old PyTorch version
+# ─────────────────────────────────────────────────────────────
 
 class SegFormerWrapper:
-    def __init__(self, model_name="jonathandinu/face-parsing"):
-        """
-        Initializes the Face Parsing model (SegFormer/ConvNeXt-based).
-        Default: jonathandinu/face-parsing (19 classes)
-        """
-        try:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"Loading Face Parsing Model: {model_name} on {self.device}...")
-            
-            # 1. Determine Local Path
-            if getattr(sys, 'frozen', False):
-                base_dir = os.path.dirname(sys.executable)
-            else:
-                base_dir = os.getcwd()
-            local_path = os.path.join(base_dir, "saved_models", "segformer")
+    """
+    Drop-in replacement for the HuggingFace SegFormerWrapper.
+    All public method signatures are identical to the original.
+    """
 
-            # 2. Check if VALID local model exists (must have weights)
-            has_local_weights = False
-            if os.path.exists(local_path):
-                files = os.listdir(local_path)
-                # Check for any standard weight file
-                weight_files = ['model.safetensors', 'pytorch_model.bin', 'tf_model.h5']
-                if any(w in files for w in weight_files):
-                    has_local_weights = True
-            
-            # 3. Load
-            if has_local_weights:
-                print(f"Loading from local path: {local_path}")
-                self.processor = SegformerImageProcessor.from_pretrained(local_path)
-                self.model = AutoModelForSemanticSegmentation.from_pretrained(local_path)
-            else:
-                # Fallback to HuggingFace
-                print(f"Local model missing or incomplete. Downloading {model_name}...")
-                self.processor = SegformerImageProcessor.from_pretrained(model_name)
-                self.model = AutoModelForSemanticSegmentation.from_pretrained(model_name)
-                
-                # Save it for next time (Create directory if needed)
-                print(f"Saving model to {local_path} for faster loading next time...")
-                if not os.path.exists(local_path):
-                    os.makedirs(local_path, exist_ok=True)
-                self.processor.save_pretrained(local_path)
-                self.model.save_pretrained(local_path)
-            
-            try:
-                self.model.to(self.device)
-            except RuntimeError as e:
-                if "out of memory" in str(e).lower():
-                    print("GPU Out of Memory! Falling back to CPU for SegFormer...")
-                    self.device = "cpu"
-                    self.model.to("cpu")
-                    torch.cuda.empty_cache()
-                else:
-                    raise e
-            
-            print(f"SegFormer loaded successfully on {self.device}")
-            
-            # Standard Face Parsing Labels (BiSeNet/CelebAMask-HQ convention)
-            # 0: background
-            # 1: skin (face)
-            # 2: l_brow, 3: r_brow
-            # 4: l_eye, 5: r_eye
-            # 6: glasses (sometimes)
-            # 7: l_ear, 8: r_ear
-            # 9: ear_r (duplicate?), 
-            # 10: nose
-            # 11: mouth
-            # 12: u_lip, 13: l_lip
-            # 14: neck
-            # 15: neck_l (clothes?)
-            # 16: cloth
-            # 17: hair
-            # 18: hat
-            self.labels = {
-                'background': 0, 'skin': 1, 'l_brow': 2, 'r_brow': 3, 
-                'l_eye': 4, 'r_eye': 5, 'eye_g': 6, 'l_ear': 7, 
-                'r_ear': 8, 'ear_r': 9, 'ear_r': 9, 'nose': 10, 'mouth': 11, 
-                'u_lip': 12, 'l_lip': 13, 'neck': 14, 'neck_l': 15, 
-                'cloth': 16, 'hair': 17, 'hat': 18
-            }
-            
-        except ImportError as e:
-            print(f"IMPORT ERROR Loading SegFormer: {e}")
-            print(f"   This usually means 'transformers' library is missing or incompatible.")
-            print("SegFormer is DISABLED. Skin/Jaundice detection will fail.")
-            self.model = None
-        except RuntimeError as e:
-            print(f"RUNTIME ERROR Loading SegFormer: {e}")
-            print(f"   This could be a CUDA/memory issue or model file corruption.")
-            print("SegFormer is DISABLED. Skin/Jaundice detection will fail.")
-            self.model = None
-        except Exception as e:
-            print(f"UNEXPECTED ERROR Loading SegFormer: {type(e).__name__}: {e}")
-            print(f"   Full traceback:")
-            import traceback
-            traceback.print_exc()
-            
-            # Write error to file for debugging
-            try:
-                if getattr(sys, 'frozen', False):
-                    base_dir = os.path.dirname(sys.executable)
-                else:
-                    base_dir = os.getcwd() # Should be /app
-                
-                err_path = os.path.join(base_dir, "saved_models", "segformer_error.txt")
-                with open(err_path, "w") as f:
-                    f.write(f"Error: {e}\n")
-                    f.write(traceback.format_exc())
-            except:
-                pass
+    def __init__(self, model_name: str = "jonathandinu/face-parsing"):
+        self._ready = _get_session() is not None
+        if self._ready:
+            logger.info("SegFormerWrapper (ONNX): ready.")
+        else:
+            logger.warning(
+                "SegFormerWrapper (ONNX): session not ready. "
+                "Run export_segformer_to_onnx.py to generate the ONNX model."
+            )
 
-            print("SegFormer is DISABLED. Skin/Jaundice detection will fail.")
-            self.model = None
-    
+        # Face label map — identical to original
+        self.labels = {
+            'background': 0, 'skin': 1, 'l_brow': 2, 'r_brow': 3,
+            'l_eye': 4, 'r_eye': 5, 'eye_g': 6, 'l_ear': 7,
+            'r_ear': 8, 'ear_r': 9, 'nose': 10, 'mouth': 11,
+            'u_lip': 12, 'l_lip': 13, 'neck': 14, 'neck_l': 15,
+            'cloth': 16, 'hair': 17, 'hat': 18,
+        }
+
+        # MediaPipe (kept as-is, no changes to eye/mouth helpers)
+        self.face_mesh = None
+        self.mp_face_mesh = None
 
     @property
-    def is_ready(self):
-        return self.model is not None
+    def is_ready(self) -> bool:
+        return _get_session() is not None
+
+    # ── Core prediction ──────────────────────────────────────
 
     def validate_image(self, image, context="image"):
-        """Comprehensive image validation."""
         if image is None:
             return False, f"{context} is None"
-        
         if not isinstance(image, (np.ndarray, Image.Image)):
-            return False, f"{context} is not a valid image type, got {type(image)}"
-        
+            return False, f"{context} type invalid: {type(image)}"
         if isinstance(image, np.ndarray):
-            if image.size == 0:
-                return False, f"{context} is empty"
-            
-            if len(image.shape) < 2:
-                return False, f"{context} has insufficient dimensions"
-            
+            if image.size == 0: return False, f"{context} is empty"
             h, w = image.shape[:2]
-            
-            if h < MIN_IMAGE_SIZE or w < MIN_IMAGE_SIZE:
-                return False, f"{context} too small: {w}x{h}"
-            
-            if h > MAX_IMAGE_SIZE or w > MAX_IMAGE_SIZE:
-                return False, f"{context} too large: {w}x{h}"
-            
-            if np.isnan(image).any() or np.isinf(image).any():
-                return False, f"{context} contains NaN/Inf values"
-        
+            if h < MIN_IMAGE_SIZE or w < MIN_IMAGE_SIZE: return False, f"{context} too small: {w}x{h}"
+            if h > MAX_IMAGE_SIZE or w > MAX_IMAGE_SIZE: return False, f"{context} too large: {w}x{h}"
+            if np.isnan(image).any() or np.isinf(image).any(): return False, f"{context} has NaN/Inf"
         return True, "Valid"
 
-    def predict(self, image):
+    def predict(self, image) -> np.ndarray:
         """
-        Runs inference on a single image (numpy array BGR or RGB).
-        Returns class mask (H, W).
-        
-        Edge cases handled:
-        - Model not loaded
-        - Invalid image types
-        - NaN/Inf values
-        - GPU OOM
-        - Device mismatch
+        Run ONNX segmentation on image (BGR numpy or PIL RGB).
+        Returns class mask (H, W) uint8.
         """
-        # Validate input
         is_valid, msg = self.validate_image(image, "predict input")
         if not is_valid:
-            logger.error(f"SegFormer predict validation failed: {msg}")
-            # Return empty mask with same dimensions if available
-            if isinstance(image, np.ndarray) and len(image.shape) >= 2:
-                return np.zeros(image.shape[:2], dtype=np.uint8)
-            return np.zeros((480, 640), dtype=np.uint8)  # Default fallback
-        
-        if self.model is None:
-            logger.warning("SegFormer Predict called but model is None!")
-            # Return an empty mask if the model failed to load
-            if isinstance(image, np.ndarray):
-                return np.zeros(image.shape[:2], dtype=np.uint8)
-            elif isinstance(image, Image.Image):
-                return np.zeros(image.size[::-1], dtype=np.uint8)
-            else:
-                return np.zeros((480, 640), dtype=np.uint8)
-
-        try:
-            # Convert to PIL (RGB)
-            if isinstance(image, np.ndarray):
-                # Ensure we have valid dimensions
-                if len(image.shape) < 2:
-                    raise ValueError(f"Image has insufficient dimensions: {image.shape}")
-                
-                # Assume BGR if 3 channels, convert to RGB
-                if image.ndim == 3 and image.shape[2] == 3:
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                elif image.ndim == 2:
-                    # Grayscale to RGB
-                    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-                elif image.ndim == 3 and image.shape[2] == 4:
-                    # RGBA to RGB
-                    image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-                    
-                image_pil = Image.fromarray(image)
-            else:
-                image_pil = image
-                # Convert PIL to numpy to check size
-                img_array = np.array(image_pil)
-                if len(img_array.shape) >= 2:
-                    h, w = img_array.shape[:2]
-                    if h > MAX_IMAGE_SIZE or w > MAX_IMAGE_SIZE:
-                        logger.warning(f"Image too large, resizing: {w}x{h}")
-                        image_pil = image_pil.resize((min(w, MAX_IMAGE_SIZE), min(h, MAX_IMAGE_SIZE)))
-            
-            # Process with error handling
-            try:
-                inputs = self.processor(images=image_pil, return_tensors="pt")
-            except Exception as e:
-                logger.error(f"SegFormer processor failed: {e}")
-                # Fallback: return empty mask
-                if isinstance(image, np.ndarray):
-                    return np.zeros(image.shape[:2], dtype=np.uint8)
-                return np.zeros((image_pil.size[1], image_pil.size[0]), dtype=np.uint8)
-            
-            # Move inputs to device with error handling
-            try:
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            except RuntimeError as e:
-                if "out of memory" in str(e).lower():
-                    logger.warning("GPU OOM moving inputs, falling back to CPU")
-                    self.device = "cpu"
-                    self.model.to("cpu")
-                    torch.cuda.empty_cache()
-                    inputs = {k: v.to("cpu") for k, v in inputs.items()}
-                else:
-                    raise
-            
-            # Ensure model is on device (lazy move)
-            if self.model.device.type != self.device:
-                try:
-                    self.model.to(self.device)
-                except RuntimeError as e:
-                    if "out of memory" in str(e).lower():
-                        logger.warning("GPU OOM moving model, using CPU")
-                        self.device = "cpu"
-                        self.model.to("cpu")
-                        torch.cuda.empty_cache()
-                        inputs = {k: v.to("cpu") for k, v in inputs.items()}
-                    else:
-                        raise
-
-            with torch.no_grad():
-                try:
-                    outputs = self.model(**inputs)
-                except RuntimeError as e:
-                    if "out of memory" in str(e).lower():
-                        logger.error("GPU OOM during inference")
-                        torch.cuda.empty_cache()
-                        # Return empty mask on OOM
-                        if isinstance(image, np.ndarray):
-                            return np.zeros(image.shape[:2], dtype=np.uint8)
-                        return np.zeros((image_pil.size[1], image_pil.size[0]), dtype=np.uint8)
-                    raise
-                
-            logits = outputs.logits  # shape (1, num_labels, H/4, W/4)
-            
-            # Upsample logits to original size
-            upsampled_logits = torch.nn.functional.interpolate(
-                logits,
-                size=image_pil.size[::-1],  # (H, W)
-                mode="bilinear",
-                align_corners=False,
-            )
-            
-            # Argmax to get labels
-            pred_seg = upsampled_logits.argmax(dim=1)[0]  # (H, W)
-            
-            result = pred_seg.cpu().numpy().astype(np.uint8)
-            
-            # Validate result
-            if result.size == 0:
-                logger.error("SegFormer produced empty result")
-                if isinstance(image, np.ndarray):
-                    return np.zeros(image.shape[:2], dtype=np.uint8)
-                return np.zeros((image_pil.size[1], image_pil.size[0]), dtype=np.uint8)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"SegFormer predict error: {e}")
-            import traceback
-            traceback.print_exc()
-            # Return empty mask on error
-            if isinstance(image, np.ndarray) and len(image.shape) >= 2:
+            logger.error(f"SegFormer predict validation: {msg}")
+            if isinstance(image, np.ndarray) and image.ndim >= 2:
                 return np.zeros(image.shape[:2], dtype=np.uint8)
             return np.zeros((480, 640), dtype=np.uint8)
 
+        sess = _get_session()
+        if sess is None:
+            logger.warning("SegFormer ONNX session is None, returning empty mask.")
+            if isinstance(image, np.ndarray): return np.zeros(image.shape[:2], dtype=np.uint8)
+            w, h = image.size; return np.zeros((h, w), dtype=np.uint8)
+
+        try:
+            # Normalise to BGR numpy
+            if isinstance(image, Image.Image):
+                img_bgr = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR)
+            elif image.ndim == 2:
+                img_bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            elif image.shape[2] == 4:
+                img_bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+            else:
+                img_bgr = image
+
+            orig_h, orig_w = img_bgr.shape[:2]
+            tensor = _preprocess(img_bgr)
+            logits = sess.run(None, {"pixel_values": tensor})[0]
+            return _postprocess(logits, orig_h, orig_w)
+
+        except Exception as e:
+            logger.error(f"SegFormer predict error: {e}")
+            if isinstance(image, np.ndarray) and image.ndim >= 2:
+                return np.zeros(image.shape[:2], dtype=np.uint8)
+            return np.zeros((480, 640), dtype=np.uint8)
+
+    # ── Eye / Mouth helpers (unchanged from original) ────────
+
     def get_eye_rois(self, mask, image_bgr):
-        """
-        Extracts Left and Right Eye crops from the segmentation mask.
-        Returns: list of (crop, label_name) tuples
-        """
         rois = []
         h, w = mask.shape
-        
-        # Labels for eyes
-        eye_classes = {'Left Eye': 4, 'Right Eye': 5}
-        
-        for name, idx in eye_classes.items():
-            # Create binary mask for this eye
+        for name, idx in {'Left Eye': 4, 'Right Eye': 5}.items():
             eye_mask = (mask == idx).astype(np.uint8)
-            
-            # Find contours
             contours, _ = cv2.findContours(eye_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
             if contours:
-                # Get max contour (largest eye part)
                 c = max(contours, key=cv2.contourArea)
                 x, y, cw, ch = cv2.boundingRect(c)
-                
-                # Add padding (eyes are often too tight in segmentation)
-                pad = int(max(cw, ch) * 0.5) 
-                x1 = max(0, x - pad)
-                y1 = max(0, y - int(pad*0.5))
-                x2 = min(w, x + cw + pad)
-                y2 = min(h, y + ch + int(pad*0.5))
-                
+                pad = int(max(cw, ch) * 0.5)
+                x1 = max(0, x - pad); y1 = max(0, y - int(pad * 0.5))
+                x2 = min(w, x + cw + pad); y2 = min(h, y + ch + int(pad * 0.5))
                 crop = image_bgr[y1:y2, x1:x2]
                 if crop.size > 0:
                     rois.append((crop, name, (x1, y1, x2, y2)))
-                    
         return rois
 
     def apply_iris_mask(self, eye_img):
-        """
-        Detects the iris using Hough Circles (robust to blur) or Fallback Thresholding.
-        Returns the image with the iris blacked out.
-        """
-        if eye_img is None or eye_img.size == 0:
-            return eye_img
-            
+        if eye_img is None or eye_img.size == 0: return eye_img, ""
         h, w = eye_img.shape[:2]
         gray = cv2.cvtColor(eye_img, cv2.COLOR_BGR2GRAY)
-        
-        # --- STRATEGY 1: Hough Circle Transform (Best for Blurry/Circular shapes) ---
-        # Blur slightly to reduce noise
-        blurred_hough = cv2.medianBlur(gray, 5)
-        
-        # HoughCircles params:
-        # dp=1: input resolution
-        # minDist=w/2: assume only one iris per crop
-        # param1=50: Canny high threshold (lower because blur reduces gradients)
-        # param2=30: Accumulator threshold (lower = more circles detected)
+        blurred = cv2.medianBlur(gray, 5)
         circles = cv2.HoughCircles(
-            blurred_hough, 
-            cv2.HOUGH_GRADIENT, 
-            dp=1, 
-            minDist=w/2,
-            param1=50, 
-            param2=30,
-            minRadius=int(min(h,w)*0.10), # Iris is at least 10%
-            maxRadius=int(min(h,w)*0.55)  # Iris is at most 55%
+            blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=w/2,
+            param1=50, param2=30,
+            minRadius=int(min(h, w) * 0.10), maxRadius=int(min(h, w) * 0.55)
         )
-        
         mask = np.ones_like(eye_img) * 255
-        
         if circles is not None:
-             circles = np.uint16(np.around(circles))
-             # Take the strongest circle (first one)
-             for i in circles[0,:]:
-                 cx, cy, r = i[0], i[1], i[2]
-                 
-                 # Sanity check: Circle center must be somewhat central
-                 if abs(cx - w//2) < w*0.4 and abs(cy - h//2) < h*0.4:
-                     # Draw black circle on mask
-                     # Dilate slightly (10%) to ensure coverage
-                     cv2.circle(mask, (cx, cy), int(r*1.1), (0,0,0), -1)
-                     
-                     # SUCCESS: Used Hough
-                     return cv2.bitwise_and(eye_img, mask), ""
-
-        # --- STRATEGY 2 (Fallback): Contrast + Contours (Previous Logic) ---
-        # CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            circles = np.uint16(np.around(circles))
+            for cx, cy, r in circles[0]:
+                if abs(cx - w//2) < w*0.4 and abs(cy - h//2) < h*0.4:
+                    cv2.circle(mask, (int(cx), int(cy)), int(r * 1.1), (0, 0, 0), -1)
+                    return cv2.bitwise_and(eye_img, mask), ""
+        # Fallback contour method
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
-        
-        blurred = cv2.GaussianBlur(enhanced, (7, 7), 0)
-        
-        # Otsu Thresholding
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        
-        # Safety Check: If OTSU makes everything white (bad lighting)
-        white_pixel_ratio = cv2.countNonZero(thresh) / (thresh.shape[0] * thresh.shape[1])
-        if white_pixel_ratio > 0.6: 
-             _, thresh = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY_INV)
-
+        blurred2 = cv2.GaussianBlur(enhanced, (7, 7), 0)
+        _, thresh = cv2.threshold(blurred2, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        if cv2.countNonZero(thresh) / thresh.size > 0.6:
+            _, thresh = cv2.threshold(blurred2, 80, 255, cv2.THRESH_BINARY_INV)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        best_c = None
-        max_area = 0
-        center = (w//2, h//2)
-        
-        if contours:
-            for c in contours:
-                area = cv2.contourArea(c)
-                # Filter noise
-                if area < (h*w)*0.02: continue 
-                # Filter massive blobs (likely the whole frame/socket)
-                if area > (h*w)*0.55: continue
-
-                # Check circularity (optional but good for iris)
-                perimeter = cv2.arcLength(c, True)
-                if perimeter == 0: continue
-                circularity = 4 * np.pi * (area / (perimeter * perimeter))
-                
-                # Check distance to center
-                M = cv2.moments(c)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    dist = np.sqrt((cx-center[0])**2 + (cy-center[1])**2)
-                    
-                    # We want blob near center
-                    if dist < w*0.4: 
-                        # Prefer more circular + larger
-                        score = area * (1 + circularity)
-                        if score > max_area:
-                            max_area = score
-                            best_c = c
-            
-            if best_c is not None:
-                 # Draw the iris contour as BLACK on the mask (Remove it)
-                 cv2.drawContours(mask, [best_c], -1, (0, 0, 0), -1)
-                 
-                 # Draw a circle around it to be sure (dilate the removal)
-                 (x,y), radius = cv2.minEnclosingCircle(best_c)
-                 center_c = (int(x), int(y))
-                 
-                 # Constraint Radius (Prevent massive blobs)
-                 max_radius = min(h, w) * 0.45
-                 radius_c = int(min(radius * 1.1, max_radius)) 
-                 
-                 cv2.circle(mask, center_c, radius_c, (0, 0, 0), -1)
-
-        # Apply mask
-        eye_masked = cv2.bitwise_and(eye_img, mask)
-        # return mask as 'None' or just empty string to avoid UI showing it
-        return eye_masked, ""
+        best_c, max_score, center = None, 0, (w//2, h//2)
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < h*w*0.02 or area > h*w*0.55: continue
+            perim = cv2.arcLength(c, True)
+            if perim == 0: continue
+            M = cv2.moments(c)
+            if M["m00"] != 0:
+                cx2 = int(M["m10"] / M["m00"]); cy2 = int(M["m01"] / M["m00"])
+                if abs(cx2 - center[0]) < w*0.4:
+                    score = area * (1 + 4*np.pi*area/(perim**2))
+                    if score > max_score: max_score, best_c = score, c
+        if best_c is not None:
+            cv2.drawContours(mask, [best_c], -1, (0, 0, 0), -1)
+            (x, y), radius = cv2.minEnclosingCircle(best_c)
+            cv2.circle(mask, (int(x), int(y)), int(min(radius*1.1, min(h,w)*0.45)), (0, 0, 0), -1)
+        return cv2.bitwise_and(eye_img, mask), ""
 
     def get_skin_mask(self, mask):
-        """
-        Returns a binary mask for skin areas.
-        Includes morphology to fill holes and remove noise (color cards).
-        """
-        # Skin (1), L_Ear (7), R_Ear (8), Neck (14)
-        target_classes = [1, 7, 8, 14] 
-        
-        skin_mask = np.isin(mask, target_classes).astype(np.uint8) * 255
-        
-        # 1. Fill Holes (MORPH_CLOSE) - Fixes "black blobs on skin"
-        # Closing = Dilation followed by Erosion. It closes small holes.
-        kernel_close = np.ones((5,5), np.uint8)
-        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel_close)
-        
-        # 2. Remove Noise (MORPH_OPEN) - Removes small speckles
-        # Opening = Erosion followed by Dilation.
-        kernel_open = np.ones((3,3), np.uint8)
-        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel_open)
-
-        # 3. Size Filter - Remove small noise (Speckles)
-        # Keep all significant blobs (Face, Neck, etc.)
+        skin_mask = np.isin(mask, [1, 7, 8, 14]).astype(np.uint8) * 255
+        kernel_c = np.ones((5, 5), np.uint8)
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel_c)
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
         contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
         if contours:
-            # Create a new blank mask
-            filtered_mask = np.zeros_like(skin_mask)
-            
-            h, w = skin_mask.shape
-            min_area = (h * w) * 0.005 # 0.5% of image area
-            
-            found_any = False
+            filtered = np.zeros_like(skin_mask)
+            min_area = skin_mask.shape[0] * skin_mask.shape[1] * 0.005
+            found = False
             for c in contours:
                 if cv2.contourArea(c) > min_area:
-                    cv2.drawContours(filtered_mask, [c], -1, 255, -1)
-                    found_any = True
-            
-            if found_any:
-                return filtered_mask
-
-        # Fallback: SegFormer found nothing? Try HSV Color Skin Detection
-        # This is useful for arms/hands/legs where SegFormer (Face-trained) might fail
-        if cv2.countNonZero(skin_mask) == 0:
-            # Convert to HSV
-            # Ensure it's 3-channel (mask is single channel, wait, this method takes mask... 
-            # Ah, this method takes 'mask' (prediction), not 'image'.
-            # I cannot do HSV check here without the image.
-            # I need to modify the signature or handle fallback in tasks.py.
-            pass
-            
-        return skin_mask
-
+                    cv2.drawContours(filtered, [c], -1, 255, -1); found = True
+            if found: return filtered
         return skin_mask
 
     def get_skin_mask_color(self, image_bgr):
-        """
-        Robust HSV+YCbCr Skin Detection (Fallback for non-face body parts).
-        """
-        # Convert to HSV
-        hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-        
-        # HSV Thresholds (Generic Skin)
-        lower_hsv = np.array([0, 15, 50], dtype=np.uint8)
-        upper_hsv = np.array([20, 255, 255], dtype=np.uint8)
-        mask_hsv = cv2.inRange(hsv, lower_hsv, upper_hsv)
-        
-        # Convert to YCbCr (More robust for lighting)
+        hsv   = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+        mask1 = cv2.inRange(hsv, np.array([0, 15, 50], np.uint8), np.array([20, 255, 255], np.uint8))
         ycbcr = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2YCrCb)
-        lower_ycbcr = np.array([0, 133, 77], dtype=np.uint8)
-        upper_ycbcr = np.array([255, 173, 127], dtype=np.uint8)
-        mask_ycbcr = cv2.inRange(ycbcr, lower_ycbcr, upper_ycbcr)
-        
-        # Combine
-        combined = cv2.bitwise_and(mask_hsv, mask_ycbcr)
-        
-        # Clean up
+        mask2 = cv2.inRange(ycbcr, np.array([0, 133, 77], np.uint8), np.array([255, 173, 127], np.uint8))
+        combined = cv2.bitwise_and(mask1, mask2)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
-        
-        return combined
-    def init_mediapipe(self):
-        """Initializes MediaPipe Face Mesh if not already loaded."""
-        if hasattr(self, 'face_mesh') and self.face_mesh:
-            return
+        return cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
 
+    def init_mediapipe(self):
+        if hasattr(self, 'face_mesh') and self.face_mesh: return
         try:
             import mediapipe as mp
-            # Explicitly import solutions to ensure submodules are loaded
-            from mediapipe.python.solutions import face_mesh
             self.mp_face_mesh = mp.solutions.face_mesh
             self.face_mesh = self.mp_face_mesh.FaceMesh(
-                static_image_mode=True,
-                max_num_faces=1,
-                refine_landmarks=True, # Critical for Iris landmarks
-                min_detection_confidence=0.5
+                static_image_mode=True, max_num_faces=1,
+                refine_landmarks=True, min_detection_confidence=0.5
             )
-            print("MediaPipe Face Mesh initialized.")
         except ImportError:
-            print("MediaPipe not installed. Falling back to SegFormer/Hough.")
             self.face_mesh = None
 
     def get_eyes_mediapipe(self, image_bgr):
-        """
-        Extracts eyes using MediaPipe Face Mesh.
-        Returns: list of (masked_crop, name, bbox)
-        """
         self.init_mediapipe()
-        if not self.face_mesh:
-            # Fallback to SegFormer if MediaPipe fails
-            return []
-
+        if not self.face_mesh: return []
         h, w = image_bgr.shape[:2]
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        results = self.face_mesh.process(image_rgb)
-
-        if not results.multi_face_landmarks:
-            return []
-
+        results = self.face_mesh.process(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
+        if not results.multi_face_landmarks: return []
         landmarks = results.multi_face_landmarks[0].landmark
-        
-        # Landmark Indices (MediaPipe)
-        # Eye Contours (Eyelids)
-        LEFT_EYE_INDICES = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
-        RIGHT_EYE_INDICES = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
-        
-        # Iris Indices (Refined)
-        LEFT_IRIS_INDICES = [474, 475, 476, 477]
-        RIGHT_IRIS_INDICES = [469, 470, 471, 472]
-
+        LEFT_EYE   = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+        RIGHT_EYE  = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+        LEFT_IRIS  = [474, 475, 476, 477]
+        RIGHT_IRIS = [469, 470, 471, 472]
         rois = []
-
-        for name, eye_idxs, iris_idxs in [
-            ('Left Eye', LEFT_EYE_INDICES, LEFT_IRIS_INDICES),
-            ('Right Eye', RIGHT_EYE_INDICES, RIGHT_IRIS_INDICES)
-        ]:
-            # Get points
-            eye_points = np.array([(int(landmarks[i].x * w), int(landmarks[i].y * h)) for i in eye_idxs])
-            iris_points = np.array([(int(landmarks[i].x * w), int(landmarks[i].y * h)) for i in iris_idxs])
-            
-            # --- 1. Compute Bounding Box ---
-            x, y, w_eye, h_eye = cv2.boundingRect(eye_points)
-            
-            # Add padding (50% context)
-            pad_x = int(w_eye * 0.5)
-            pad_y = int(h_eye * 0.8) # More vertical context for eyelids
-            
-            x1 = max(0, x - pad_x)
-            y1 = max(0, y - pad_y)
-            x2 = min(w, x + w_eye + pad_x)
-            y2 = min(h, y + h_eye + pad_y)
-            
+        for name, eye_idxs, iris_idxs in [('Left Eye', LEFT_EYE, LEFT_IRIS), ('Right Eye', RIGHT_EYE, RIGHT_IRIS)]:
+            eye_pts  = np.array([(int(landmarks[i].x*w), int(landmarks[i].y*h)) for i in eye_idxs])
+            iris_pts = np.array([(int(landmarks[i].x*w), int(landmarks[i].y*h)) for i in iris_idxs])
+            x, y, ew, eh = cv2.boundingRect(eye_pts)
+            px, py = int(ew*0.5), int(eh*0.8)
+            x1, y1 = max(0, x-px), max(0, y-py)
+            x2, y2 = min(w, x+ew+px), min(h, y+eh+py)
             crop = image_bgr[y1:y2, x1:x2]
             if crop.size == 0: continue
-            
-            # --- 2. Create Mask (Sclera Only) ---
-            # Create mask on local crop coords
             mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-            
-            # Shift points to local crop coords
-            local_eye_points = eye_points - [x1, y1]
-            local_iris_points = iris_points - [x1, y1]
-            
-            # Fill Eye Contour (White)
-            cv2.fillPoly(mask, [local_eye_points], 255)
-            
-            # Subtract Iris (Black)
-            # Find enclosing circle for iris to make it smooth
-            (cx, cy), radius = cv2.minEnclosingCircle(local_iris_points)
-            cv2.circle(mask, (int(cx), int(cy)), int(radius), 0, -1)
-            
-            # --- 3. Apply Mask ---
-            masked_crop = cv2.bitwise_and(crop, crop, mask=mask)
-            
-            
-            rois.append((masked_crop, name, (x1, y1, x2, y2)))
-            
+            cv2.fillPoly(mask, [eye_pts - [x1, y1]], 255)
+            (cx, cy), r = cv2.minEnclosingCircle(iris_pts - [x1, y1])
+            cv2.circle(mask, (int(cx), int(cy)), int(r), 0, -1)
+            rois.append((cv2.bitwise_and(crop, crop, mask=mask), name, (x1, y1, x2, y2)))
         return rois
 
     def get_body_segmentation(self, image_bgr):
-        """
-        Uses MediaPipe Selfie Segmentation to separate Person from Background.
-        Returns: Binary Mask (255=Person, 0=Background)
-        """
         try:
             import mediapipe as mp
-            # Import solution explicitly
-            from mediapipe.python.solutions import selfie_segmentation
-            
-            if not hasattr(self, 'mp_selfie_segmentation'):
-                self.mp_selfie_segmentation = mp.solutions.selfie_segmentation
-                self.segmenter = self.mp_selfie_segmentation.SelfieSegmentation(model_selection=1) # 1 = Landscape (more accurate)
-
-            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-            results = self.segmenter.process(image_rgb)
-
-            if not results.segmentation_mask is None:
-                # Threshold usually 0.5 (or higher for stricter mask)
-                condition = results.segmentation_mask > 0.5
-                # Create mask
-                mask = np.where(condition, 255, 0).astype(np.uint8)
-                return mask
-            
-            return np.zeros(image_bgr.shape[:2], dtype=np.uint8)
-
+            if not hasattr(self, 'segmenter'):
+                self.segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
+            results = self.segmenter.process(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
+            if results.segmentation_mask is not None:
+                return np.where(results.segmentation_mask > 0.5, 255, 0).astype(np.uint8)
         except Exception as e:
-            print(f"MediaPipe Selfie Segmentation Failed: {e}")
-            # Fallback: Return all ones (assume whole image is person) so strict color filter handles it
-            return np.ones(image_bgr.shape[:2], dtype=np.uint8) * 255
+            logger.warning(f"Body segmentation failed: {e}")
+        return np.ones(image_bgr.shape[:2], dtype=np.uint8) * 255

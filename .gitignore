@@ -54,8 +54,9 @@ saved_models/*.bin
 saved_models/segformer/
 saved_models/**/*.pth
 saved_models/**/*.safetensors
-# ONNX models — track lightweight classifiers, ignore large segmentation models
-saved_models_onnx/segformer.onnx
+# ONNX models — large binary files, excluded from git (regenerate via scripts/export_to_onnx.py)
+saved_models_onnx/
+*.onnx
 
 # Datasets & Archives
 Dataset/

@@ -12,9 +12,7 @@ opencv-python-headless
 pillow
 # ONNX Runtime — replaces timm + PyTorch for all classification models
 onnxruntime>=1.18.0
-# transformers needed by SegFormer skin segmentation model
-transformers<4.46
-
+# PyTorch kept minimal for Burns YOLO model only
 torch==2.2.0
 torchvision==0.17.0
 scikit-learn
