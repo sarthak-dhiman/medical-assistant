@@ -37,7 +37,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
-    restart: always
+    restart: no
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 45s
@@ -52,7 +52,7 @@ services:
   # 3. AI Worker
   worker:
     image: diseaseprediction-backend:latest
-    restart: always
+    restart: no
     depends_on:
       redis:
         condition: service_started
@@ -86,7 +86,7 @@ services:
   flower:
     image: diseaseprediction-backend:latest
     command: celery -A web_app.backend.celery_app flower --port=5555 --basic_auth=admin:${FLOWER_PASSWORD:-changeme123}
-    restart: on-failure
+    restart: no
     ports:
       - "5555:5555"
     environment:
@@ -117,7 +117,7 @@ services:
       - app-network
     profiles:
       - monitor
-    restart: always
+    restart: no
 
   # 6. Frontend
   frontend:
