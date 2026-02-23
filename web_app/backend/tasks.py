@@ -959,13 +959,27 @@ def diagnostic_gateway_task(self, image_data_b64, debug=False):
                 logger.info(f"Auto-Routing Analysis: EyeRatio={eye_ratio:.3f}, LipsRatio={lips_ratio:.3f}")
                 
                 if lips_ratio > 0.12: 
-                    route_mode = "ORAL_CANCER" # Close up mouth
+                    # If mouth is a close-up, check if it's open (Teeth) or closed (Oral Cancer)
+                    # Mouth open ratio = Vertical distance / Face height
+                    top_lip = landmarks[13]
+                    bot_lip = landmarks[14]
+                    face_h = landmarks[152].y - landmarks[10].y
+                    mouth_d = np.linalg.norm(
+                        np.array([top_lip.x * w, top_lip.y * h]) - np.array([bot_lip.x * w, bot_lip.y * h])
+                    )
+                    open_ratio = mouth_d / (face_h * h + 1e-6)
+                    
+                    if open_ratio > 0.05:
+                        route_mode = "TEETH_DISEASE"
+                        logger.info(f"Auto-Routing: Mouth is OPEN (ratio={open_ratio:.3f}) -> TEETH_DISEASE")
+                    else:
+                        route_mode = "ORAL_CANCER" # Close up mouth, but closed
+                        logger.info(f"Auto-Routing: Mouth is CLOSED (ratio={open_ratio:.3f}) -> ORAL_CANCER")
+                        
                 elif eye_ratio > 0.10: 
                     route_mode = "CATARACT" # Close up eyes
                 else:
                     # Face detected but not macro.
-                    # User: "face should either trigger the jaundice eye model or the skin model"
-                    # We'll stick to Jaundice Eye as it's more specific for general face views than Skin Disease
                     route_mode = "JAUNDICE_EYE"
         
         # C. Infant/Body Check (Only if NO FACE detected)

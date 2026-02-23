@@ -18,6 +18,7 @@ services:
     command: uvicorn web_app.backend.main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
+      - ./saved_models_onnx:/app/saved_models_onnx # ONNX models (Hot-load)
       - ./external:/app/external # Mount external repos (YOLOv7)
     environment:
       - REDIS_URL=redis://redis:6379/0
@@ -61,6 +62,7 @@ services:
     command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=4
     volumes:
       - ./saved_models:/app/saved_models
+      - ./saved_models_onnx:/app/saved_models_onnx # ONNX models
       - ./external:/app/external
       - hf_cache:/root/.cache/huggingface
     environment:

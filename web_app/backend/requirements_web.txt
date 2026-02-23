@@ -10,14 +10,16 @@ setuptools>=70.0.0
 urllib3>=2.2.0
 opencv-python-headless
 pillow
-transformers<4.46  # Pin to version compatible with PyTorch 2.2
-# Pinned to match pytorch/pytorch:2.2.0 base image exactly
+# ONNX Runtime — replaces timm + PyTorch for all classification models
+onnxruntime>=1.18.0
+# transformers needed by SegFormer skin segmentation model
+transformers<4.46
+
 torch==2.2.0
-torchvision==0.17.0 
-timm
+torchvision==0.17.0
 scikit-learn
 tqdm>=4.66.0
-numpy==1.23.5  # Sweet spot for legacy YOLO + modern transformers
+numpy==1.23.5  # Sweet spot for legacy YOLO + modern onnxruntime
 mediapipe==0.10.9
 protobuf<4.0.0
 ultralytics==8.2.10  # Pinned to avoid auto-update bugs
