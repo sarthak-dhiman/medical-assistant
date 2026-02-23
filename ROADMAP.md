@@ -1,7 +1,7 @@
 # Project Roadmap / Future Improvements
 
 ## Phase 1: Performance & Reliability
-- [ ] ONNX Conversion: Convert PyTorch .pth models to ONNX to reduce memory and increase speed.
+- [x] ONNX Conversion: Convert PyTorch .pth models to ONNX to reduce memory and increase speed. (Completed for 7 classifiers + SegFormer)
 - [ ] Clinical Confidence Calibration: Implement temperature scaling for realistic confidence scores.
 
 ## Phase 1.5: Observability & Robustness
