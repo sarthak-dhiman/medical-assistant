@@ -93,10 +93,17 @@ async def predict_endpoint(request: PredictRequest):
     Enqueue an image for prediction.
     Returns a Task ID.
     """
-    # Enqueue task
+    # Enqueue task to appropriate queue
     try:
-        task = predict_task.delay(request.image, request.mode, request.debug)
-        logger.info(f"Task enqueued: {task.id} (Mode: {request.mode}, Debug: {request.debug})")
+        # Determine queue based on mode
+        heavy_modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS"]
+        queue = "q_heavy_cv" if request.mode in heavy_modes else "q_lightweight"
+        
+        task = predict_task.apply_async(
+            args=[request.image, request.mode, request.debug],
+            queue=queue
+        )
+        logger.info(f"Task enqueued to {queue}: {task.id} (Mode: {request.mode})")
         return {"task_id": task.id, "status": "processing"}
     except Exception as e:
         logger.error(f"Failed to enqueue task: {e}")
@@ -110,9 +117,12 @@ async def predict_auto_endpoint(request: PredictRequest):
     """
     from .tasks import diagnostic_gateway_task
     try:
-        # Enqueue task
-        task = diagnostic_gateway_task.delay(request.image, request.debug)
-        logger.info(f"Auto-Diagnostic Task enqueued: {task.id}")
+        # Auto-gateway uses face-mesh/analysis, route to heavy queue
+        task = diagnostic_gateway_task.apply_async(
+            args=[request.image, request.debug],
+            queue="q_heavy_cv"
+        )
+        logger.info(f"Auto-Diagnostic Task enqueued to q_heavy_cv: {task.id}")
         return {"task_id": task.id, "status": "processing", "mode": "AUTO"}
     except Exception as e:
         logger.error(f"Failed to enqueue auto-task: {e}")

@@ -11,7 +11,7 @@ urllib3>=2.2.0
 opencv-python-headless
 pillow
 # ONNX Runtime — replaces timm + PyTorch for all classification models
-onnxruntime>=1.18.0
+onnxruntime-gpu==1.17.1
 # PyTorch kept minimal for Burns YOLO model only
 torch==2.2.0
 torchvision==0.17.0

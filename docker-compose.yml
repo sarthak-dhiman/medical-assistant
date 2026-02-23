@@ -50,8 +50,8 @@ services:
     networks:
       - app-network
 
-  # 3. AI Worker
-  worker:
+  # 3a. AI Worker - Heavy (Segmentation, Body Jaundice, Skin)
+  worker-heavy:
     image: diseaseprediction-backend:latest
     restart: no
     depends_on:
@@ -59,7 +59,7 @@ services:
         condition: service_started
       backend:
         condition: service_started
-    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1 -Q q_heavy_cv,celery
     volumes:
       - ./saved_models:/app/saved_models
       - ./saved_models_onnx:/app/saved_models_onnx # ONNX models
@@ -76,6 +76,39 @@ services:
       resources:
         limits:
           memory: 6G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    networks:
+      - app-network
+
+  # 3b. AI Worker - Light (Posture, Nails, Teeth, Oral)
+  worker-light:
+    image: diseaseprediction-backend:latest
+    restart: no
+    depends_on:
+      redis:
+        condition: service_started
+      backend:
+        condition: service_started
+    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=4 -Q q_lightweight
+    volumes:
+      - ./saved_models:/app/saved_models
+      - ./saved_models_onnx:/app/saved_models_onnx # ONNX models
+      - ./external:/app/external
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      # GPU Support (even light models benefit from ORT-GPU)
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - OMP_NUM_THREADS=4
+      - TZ=${TZ:-UTC}
+    deploy:
+      resources:
+        limits:
+          memory: 4G
         reservations:
           devices:
             - driver: nvidia
