@@ -464,7 +464,7 @@ def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=
                     # Use client-side crop coordinates as bbox for nerd mode overlay
                     if crop_bbox:
                         result["bbox"] = crop_bbox
-                    recommendations = inference_service.get_recommendations(label)
+                    recommendations = inference_service.get_recommendations(label, mode=mode)
                     if recommendations: result["recommendations"] = recommendations
                     return result
                 
@@ -476,7 +476,7 @@ def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=
                         label, conf, debug_info = inference_service.predict_cataract(frame, debug=debug, calibrate=calibrate)
                     
                     result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
-                    recommendations = inference_service.get_recommendations(label)
+                    recommendations = inference_service.get_recommendations(label, mode=mode)
                     if recommendations: result["recommendations"] = recommendations
                     return result
                     
@@ -492,7 +492,7 @@ def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=
                 result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
                 if "bbox" in debug_info:
                     result["bbox"] = debug_info["bbox"]
-                recommendations = inference_service.get_recommendations(label)
+                recommendations = inference_service.get_recommendations(label, mode=mode)
                 if recommendations:
                     result["recommendations"] = recommendations
                 return result
@@ -506,7 +506,7 @@ def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=
                 result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
                 if "bbox" in debug_info:
                     result["bbox"] = debug_info["bbox"]
-                recommendations = inference_service.get_recommendations(label)
+                recommendations = inference_service.get_recommendations(label, mode=mode)
                 if recommendations:
                     result["recommendations"] = recommendations
                 return result
@@ -878,7 +878,7 @@ def _process_cataract(frame, debug, calibrate=False):
         #     result["bbox"] = [0.0, 0.0, 1.0, 1.0] # Removed redundant full-frame box
         
         # Add recommendations
-        recommendations = inference_service.get_recommendations(label)
+        recommendations = inference_service.get_recommendations(label, mode=mode)
         if recommendations:
             result["recommendations"] = recommendations
             

@@ -132,9 +132,27 @@
         "recommendations": "Consult an ophthalmologist for a comprehensive eye exam. If cataracts significantly impair your daily activities, surgery to remove and replace the clouded lens is highly effective and safe."
     },
     "Normal": {
+        "description": "General healthy observation with no visible signs of condition.",
+        "causes": "N/A - This is a normal finding.",
+        "care": "Maintain regular checkups and a healthy lifestyle.",
+        "recommendations": "No specific action required."
+    },
+    "Normal_Cataract": {
         "description": "No signs of cataract detected. Your eye lens appears clear and healthy.",
         "causes": "N/A - This is a normal finding.",
         "care": "Continue regular eye care practices: wear UV-protective sunglasses, maintain a healthy diet rich in antioxidants, and avoid smoking.",
         "recommendations": "Schedule regular eye exams (every 1-2 years) to monitor eye health, especially if you are over 40 or have risk factors for eye diseases."
+    },
+    "Oral_Cancer": {
+        "description": "Possible indicators of oral cancer detected. Oral cancer appears as a growth or sore in the mouth that does not go away.",
+        "causes": "Tobacco use, heavy alcohol consumption, HPV infection, and excessive sun exposure to the lips.",
+        "care": "Do not ignore persistent sores, lumps, or rough areas in the mouth, throat, or lips.",
+        "recommendations": "Seek immediate evaluation by a dentist or oncologist. Early detection is critical for successful treatment."
+    },
+    "Normal_Oral": {
+        "description": "No visible signs of oral cancer detected. The oral cavity appears normal and healthy.",
+        "causes": "N/A - This is a healthy finding.",
+        "care": "Maintain good dental hygiene: brush twice a day, floss daily, and avoid tobacco products.",
+        "recommendations": "Schedule routine dental checkups every 6 months for professional cleaning and examination."
     }
 }

@@ -9,7 +9,7 @@ class ClinicalTriageEngine:
 
     SEVERITY_MAPPINGS = {
         "EMERGENCY": {
-            "labels": ["Acral_Lentiginous_Melanoma", "SkinCancer"],
+            "labels": ["Acral_Lentiginous_Melanoma", "SkinCancer", "Oral_Cancer"],
             "color": "bg-red-600 text-white border-red-400",
             "message": "Immediate medical attention required. Please seek urgent care or go to an emergency room."
         },
