@@ -24,7 +24,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 app = FastAPI(title="Medical Assistant API")
+
+# Setup Prometheus Metrics
+Instrumentator().instrument(app).expose(app)
 
 # --- CORS ---
 origins = ["*"] if settings.ALLOW_ALL_ORIGINS else settings.ALLOWED_ORIGINS
@@ -42,6 +47,11 @@ class PredictRequest(BaseModel):
     image: str # Base64 encoded image
     mode: str  # JAUNDICE_BODY, JAUNDICE_EYE, SKIN_DISEASE
     debug: bool = False # Enable Graduate-CAM and extended stats
+    is_preprocessed: bool = False # Flag if image is already a 224x224 ROI crop
+    calibrate: bool = False # Enable Gray World Color Constancy calibration
+    is_upload: bool = False # Flag if image was uploaded or taken from webcam
+    crop_bbox: list | None = None # Normalized crop coordinates from Edge AI [x1,y1,x2,y2]
+    mouth_open_ratio: float | None = None # Mouth open ratio from Edge AI FaceMesh (for TEETH mode gate)
 
     @validator('image')
     def validate_image(cls, v):
@@ -66,8 +76,9 @@ async def health_check():
     from fastapi import Response, status
     from .tasks import check_model_health
     try:
-        # Wait up to 12 seconds for worker response (Docker timeout is 15s)
-        task = check_model_health.delay()
+        # Route to q_lightweight (concurrency=4) so heavy worker being busy
+        # doesn't cause a health-check timeout.
+        task = check_model_health.apply_async(queue='q_lightweight')
         result = task.get(timeout=12.0)
         
         if result.get("ready"):
@@ -96,11 +107,12 @@ async def predict_endpoint(request: PredictRequest):
     # Enqueue task to appropriate queue
     try:
         # Determine queue based on mode
-        heavy_modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS"]
+        # Modes requiring SegFormer segmentation go to the heavy worker
+        heavy_modes = ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]
         queue = "q_heavy_cv" if request.mode in heavy_modes else "q_lightweight"
         
         task = predict_task.apply_async(
-            args=[request.image, request.mode, request.debug],
+            args=[request.image, request.mode, request.debug, request.is_preprocessed, request.calibrate, request.crop_bbox, request.mouth_open_ratio],
             queue=queue
         )
         logger.info(f"Task enqueued to {queue}: {task.id} (Mode: {request.mode})")

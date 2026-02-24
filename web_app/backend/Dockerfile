@@ -1,5 +1,5 @@
-# Base Image with PyTorch + CUDA 12.1
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+# Base Image with PyTorch + CUDA 11.8 (Required by onnxruntime-gpu 1.17.1)
+FROM pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
 
 # System Dependencies (OpenCV + Glib + Curl)
 RUN apt-get update && apt-get install -y \
@@ -17,6 +17,9 @@ WORKDIR /app
 # Install Python Deps
 COPY web_app/backend/requirements_web.txt .
 RUN pip install --no-cache-dir --retries 10 --timeout 1000 -r requirements_web.txt
+
+# Fix ONNXRuntime libnvrtc.so issue
+RUN ln -s /opt/conda/lib/libnvrtc.so.11.2 /opt/conda/lib/libnvrtc.so
 
 # Force Cache Bust
 ENV CACHEBUST=2

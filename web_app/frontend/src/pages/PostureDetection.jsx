@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Webcam from 'react-webcam'
 import { Activity, Scan, Target, User, RefreshCw, AlertTriangle } from 'lucide-react'
 import axios from 'axios'
+import LoadingOverlay from '../components/LoadingOverlay'
 
 // ─── Ideal posture shape (normalised, centred at 0,0) ───────────────────────
 // Drawn relative to the detected person's shoulder/hip midpoints.
@@ -64,7 +65,7 @@ function PostureDetection() {
 
     // ── Capture & predict ────────────────────────────────────────────────────
     const captureAndPredict = useCallback(async () => {
-        if (!isScanning || !webcamRef.current) return
+        if (!isAppReady || !isScanning || !webcamRef.current) return
         const now = Date.now()
         if (now - lastRequestTime.current < SAMPLE_INTERVAL || isProcessing.current) return
         const imageSrc = webcamRef.current.getScreenshot()
@@ -239,6 +240,9 @@ function PostureDetection() {
 
     return (
         <div className="w-full h-full bg-gray-950 flex flex-col relative overflow-hidden">
+
+            {/* Block UI until models are warm */}
+            {!isAppReady && <LoadingOverlay />}
 
             {/* HUD Overlay */}
             <div className="absolute inset-0 z-10 pointer-events-none flex flex-col p-4 md:p-6 justify-between">

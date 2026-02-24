@@ -29,6 +29,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - TZ=${TZ:-UTC}
+      # Fix for ONNXRuntime missing libnvrtc.so and libcudnn:
+      - LD_LIBRARY_PATH=/opt/conda/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH
     deploy:
       resources:
         limits:
@@ -72,6 +74,8 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - OMP_NUM_THREADS=4
       - TZ=${TZ:-UTC}
+      # Fix for ONNXRuntime missing libnvrtc.so and libcudnn:
+      - LD_LIBRARY_PATH=/opt/conda/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH
     deploy:
       resources:
         limits:
@@ -105,6 +109,8 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - OMP_NUM_THREADS=4
       - TZ=${TZ:-UTC}
+      # Fix for ONNXRuntime missing libnvrtc.so and libcudnn:
+      - LD_LIBRARY_PATH=/opt/conda/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH
     deploy:
       resources:
         limits:
@@ -164,6 +170,37 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - app-network
+
+  # 7. Prometheus Metrics
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - app-network
+
+  # 8. Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - app-network
+
+  # 9. Celery Exporter
+  celery-exporter:
+    image: danihodovic/celery-exporter
+    command: [ "--broker", "redis://redis:6379/0" ]
+    ports:
+      - "9808:9808"
+    depends_on:
+      - redis
     networks:
       - app-network
 

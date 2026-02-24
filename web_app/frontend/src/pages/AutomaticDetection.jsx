@@ -3,6 +3,7 @@ import Webcam from 'react-webcam'
 import { Activity, Bug, Scan, RefreshCw, AlertCircle } from 'lucide-react'
 import axios from 'axios'
 import ResultDisplay from '../ResultDisplay'
+import LoadingOverlay from '../components/LoadingOverlay'
 
 function AutomaticDetection() {
     const webcamRef = useRef(null)
@@ -45,7 +46,7 @@ function AutomaticDetection() {
     const SAMPLE_INTERVAL = 500;
 
     const captureAndPredict = useCallback(async () => {
-        if (!isScanning || !webcamRef.current) return;
+        if (!isAppReady || !isScanning || !webcamRef.current) return;
 
         const now = Date.now();
         if (now - lastRequestTime.current < SAMPLE_INTERVAL || isProcessing.current) return;
@@ -132,6 +133,9 @@ function AutomaticDetection() {
 
     return (
         <div className="w-full h-full bg-gray-950 flex flex-col relative overflow-hidden">
+
+            {/* Block UI until models are warm */}
+            {!isAppReady && <LoadingOverlay />}
 
             {/* HUD Overlay */}
             <div className="absolute inset-0 z-10 pointer-events-none flex flex-col p-4 md:p-6 justify-between">

@@ -18,7 +18,17 @@ import json
 import threading
 import base64
 import sys
-import mediapipe as mp
+
+# Lazy mediapipe import — only needed for face mesh helpers, not for model inference.
+# Avoids crashing nail/oral/teeth/posture if mediapipe has import issues.
+mp = None
+
+def _get_mediapipe():
+    global mp
+    if mp is None:
+        import mediapipe as _mp
+        mp = _mp
+    return mp
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +66,20 @@ _model_locks = {
 
 # --- ONNX Session Factory ---
 
-_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+# Standardization params (ImageNet)
+_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
+_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+
+# Clinical Calibration Temperature
+TEMPERATURE = 1.5
 
 def _make_session(onnx_path: Path) -> ort.InferenceSession | None:
-    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    try:
+        import torch
+        _cuda_ok = torch.cuda.is_available()
+    except Exception:
+        _cuda_ok = False
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if _cuda_ok else ["CPUExecutionProvider"]
     opts = ort.SessionOptions()
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     opts.intra_op_num_threads = 4
@@ -72,13 +91,52 @@ def _make_session(onnx_path: Path) -> ort.InferenceSession | None:
         logger.error(f"Failed to create ONNX session for {onnx_path}: {e}")
         return None
 
-def preprocess_to_tensor(img_bgr: np.ndarray, size: tuple) -> np.ndarray | None:
+def apply_color_constancy(img_bgr: np.ndarray) -> np.ndarray:
+    """
+    Apply Gray World Color Constancy algorithm.
+    Removes color tint by forcing the average color of the image to neutral gray.
+    """
+    try:
+        # Convert to float to avoid overflow
+        img_float = img_bgr.astype(np.float32)
+        
+        # Calculate per-channel average
+        avg_b = np.mean(img_float[:, :, 0])
+        avg_g = np.mean(img_float[:, :, 1])
+        avg_r = np.mean(img_float[:, :, 2])
+        
+        # Calculate scaling factors
+        avg_gray = (avg_b + avg_g + avg_r) / 3.0
+        if avg_b == 0 or avg_g == 0 or avg_r == 0:
+            return img_bgr
+            
+        kp = avg_gray / avg_b
+        kg = avg_gray / avg_g
+        kr = avg_gray / avg_r
+        
+        # Scale channels
+        img_float[:, :, 0] *= kp
+        img_float[:, :, 1] *= kg
+        img_float[:, :, 2] *= kr
+        
+        # Clip and convert back to uint8
+        return np.clip(img_float, 0, 255).astype(np.uint8)
+    except Exception as e:
+        logger.error(f"Color constancy error: {e}")
+        return img_bgr
+
+def preprocess_to_tensor(img_bgr: np.ndarray, size: tuple, calibrate: bool = False) -> np.ndarray | None:
     """BGR image → float32 NCHW numpy tensor ready for ONNX inference."""
     try:
         if img_bgr.ndim == 2:
             img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
         elif img_bgr.shape[2] == 4:
             img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
+            
+        # Optional Calibration (Phase 2 feature)
+        if calibrate:
+            img_bgr = apply_color_constancy(img_bgr)
+            
         img_rgb = cv2.cvtColor(cv2.resize(img_bgr, size), cv2.COLOR_BGR2RGB)
         img_f   = img_rgb.astype(np.float32) / 255.0
         img_f   = (np.clip(img_f, 0.0, 1.0) - _MEAN) / _STD
@@ -88,8 +146,10 @@ def preprocess_to_tensor(img_bgr: np.ndarray, size: tuple) -> np.ndarray | None:
         logger.error(f"Preprocess error: {e}")
         return None
 
-def _softmax(logits: np.ndarray) -> np.ndarray:
-    e = np.exp(logits - logits.max())
+def _softmax(logits: np.ndarray, temperature: float = TEMPERATURE) -> np.ndarray:
+    """Softmax with clinical temperature scaling."""
+    scaled = logits / temperature
+    e = np.exp(scaled - scaled.max())
     return e / e.sum()
 
 def _run_classification(sess, tensor) -> tuple[np.ndarray, int, float]:
@@ -122,11 +182,11 @@ def get_nail_session() -> ort.InferenceSession | None:
         logger.info(f"Nail ONNX loaded — {len(_nail_classes)} classes.")
     return _sess_nail
 
-def predict_nail_disease(img_bgr: np.ndarray, debug=False):
+def predict_nail_disease(img_bgr: np.ndarray, debug=False, calibrate=False):
     sess = get_nail_session()
     if not sess or not _nail_classes:
         return "Model Not Loaded", 0.0, {"error": "Nail ONNX model unavailable"}
-    tensor = preprocess_to_tensor(img_bgr, IMG_SIZE_LARGE)
+    tensor = preprocess_to_tensor(img_bgr, IMG_SIZE_LARGE, calibrate=calibrate)
     if tensor is None:
         return "Preprocessing Failed", 0.0, {"error": "preprocess failed"}
     try:
@@ -161,16 +221,18 @@ def get_oral_session() -> ort.InferenceSession | None:
         logger.info("Oral Cancer ONNX loaded.")
     return _sess_oral
 
-def predict_oral_cancer(img_bgr: np.ndarray, debug=False):
+def predict_oral_cancer(img_bgr: np.ndarray, debug=False, calibrate=False, preprocessed=False):
     sess = get_oral_session()
     if not sess:
         return "Model Not Loaded", 0.0, {"error": "Oral Cancer ONNX unavailable"}
     debug_info = {}
     # Mouth BBox for Nerd Mode (MediaPipe)
-    bbox, _, _ = analyze_mouth(img_bgr)
-    if bbox:
-        debug_info["bbox"] = bbox
-    tensor = preprocess_to_tensor(img_bgr, IMG_SIZE_SMALL)  # 224x224 — matches ONNX export
+    # Skip face detection when image is already a pre-cropped mouth ROI
+    if not preprocessed:
+        bbox, _, _ = analyze_mouth(img_bgr)
+        if bbox:
+            debug_info["bbox"] = bbox
+    tensor = preprocess_to_tensor(img_bgr, IMG_SIZE_SMALL, calibrate=calibrate)  # 224x224
     if tensor is None:
         return "Preprocessing Failed", 0.0, {"error": "preprocess failed"}
     try:
@@ -213,24 +275,25 @@ def get_teeth_session() -> ort.InferenceSession | None:
         logger.info(f"Teeth ONNX loaded — {len(_teeth_classes)} classes.")
     return _sess_teeth
 
-def predict_teeth_disease(img_bgr: np.ndarray, debug=False):
+def predict_teeth_disease(img_bgr: np.ndarray, debug=False, calibrate=False, preprocessed=False):
     sess = get_teeth_session()
     if not sess:
         return "Model Not Loaded", 0.0, {"error": "Teeth Disease ONNX unavailable"}
     debug_info = {}
-    # Mouth check
-    bbox, open_ratio, error = analyze_mouth(img_bgr)
-    if error:
-        return "No Face Detected", 0.0, {"error": error}
-    if bbox:
-        debug_info["bbox"] = bbox
-        debug_info["mouth_open_ratio"] = float(open_ratio)
-    if open_ratio < 0.05:
-        return "Mouth Closed", 0.0, {
-            "error": "Please open your mouth to inspect teeth.",
-            "mouth_open_ratio": float(open_ratio), "bbox": bbox
-        }
-    tensor = preprocess_to_tensor(img_bgr, IMG_SIZE_SMALL)  # 224x224 — matches ONNX export
+    # Mouth check — skip when image is already a pre-cropped mouth ROI
+    if not preprocessed:
+        bbox, open_ratio, error = analyze_mouth(img_bgr)
+        if error:
+            return "No Face Detected", 0.0, {"error": error}
+        if bbox:
+            debug_info["bbox"] = bbox
+            debug_info["mouth_open_ratio"] = float(open_ratio)
+        if open_ratio < 0.05:
+            return "Mouth Closed", 0.0, {
+                "error": "Please open your mouth to inspect teeth.",
+                "mouth_open_ratio": float(open_ratio), "bbox": bbox
+            }
+    tensor = preprocess_to_tensor(img_bgr, IMG_SIZE_SMALL, calibrate=calibrate)  # 224x224
     if tensor is None:
         return "Preprocessing Failed", 0.0, {"error": "preprocess failed"}
     try:
@@ -353,7 +416,13 @@ def get_burns_model():
         return _burns_model
 
 
-def predict_burns(img_bgr: np.ndarray, debug=False):
+def predict_burns(img_bgr: np.ndarray, debug=False, calibrate=False):
+    """Burns detection using YOLOv7."""
+    # Optional Calibration
+    if calibrate:
+        img_bgr = apply_color_constancy(img_bgr)
+
+    # Check for hands/body parts for context if needed...
     try:
         skin_mask = _detect_skin_color(img_bgr)
         total = img_bgr.shape[0] * img_bgr.shape[1]
@@ -414,7 +483,8 @@ _mp_face_mesh = None
 def get_face_mesh():
     global _mp_face_mesh
     if _mp_face_mesh is None:
-        _mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
+        _mp = _get_mediapipe()
+        _mp_face_mesh = _mp.solutions.face_mesh.FaceMesh(
             static_image_mode=True, max_num_faces=1,
             refine_landmarks=True, min_detection_confidence=0.5
         )

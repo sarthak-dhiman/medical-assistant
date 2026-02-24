@@ -4,21 +4,19 @@ celery[redis]
 redis
 flower
 python-multipart
-# Explicit dependencies to satisfy checks
 requests>=2.32.0
 setuptools>=70.0.0
 urllib3>=2.2.0
 opencv-python-headless
 pillow
-# ONNX Runtime — replaces timm + PyTorch for all classification models
+pillow==10.2.0
 onnxruntime-gpu==1.17.1
-# PyTorch kept minimal for Burns YOLO model only
-torch==2.2.0
-torchvision==0.17.0
 scikit-learn
 tqdm>=4.66.0
-numpy==1.23.5  # Sweet spot for legacy YOLO + modern onnxruntime
+numpy==1.26.4
+
+# Monitoring
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.20.0
 mediapipe==0.10.9
 protobuf<4.0.0
-ultralytics==8.2.10  # Pinned to avoid auto-update bugs
-yolov5       # For legacy Burns model loading

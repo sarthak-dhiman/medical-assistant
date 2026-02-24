@@ -1,20 +1,138 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import Webcam from 'react-webcam'
+import * as MPFaceMesh from '@mediapipe/face_mesh'
+// Fix for Vite production build where FaceMesh might be nested or undefined
+const FaceMeshConstructor = MPFaceMesh.FaceMesh || window.FaceMesh || MPFaceMesh?.default?.FaceMesh;
 import axios from 'axios'
 import ResultDisplay from './ResultDisplay'
-import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon } from 'lucide-react'
+import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon, Sun } from 'lucide-react'
 
 const API_URL = `http://${window.location.hostname}:8000`
 
-const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShowHelp }) => {
+const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShowHelp, isAppReady = true }) => {
     const webcamRef = useRef(null)
     const [result, setResult] = useState(null)
     const [error, setError] = useState(null)
     const [isProcessing, setIsProcessing] = useState(false)
     const [fps, setFps] = useState(0)
     const [facingMode, setFacingMode] = useState("user")
+    const [isCalibrateEnabled, setIsCalibrateEnabled] = useState(false)
     const [isGPUFull, setIsGPUFull] = useState(false)
     const [showRecs, setShowRecs] = useState(false)
+    const [isFaceMeshReady, setIsFaceMeshReady] = useState(false)
+
+    // Refs for MediaPipe
+    const faceMeshRef = useRef(null)
+    const canvasRef = useRef(null)
+    const latestLandmarksRef = useRef(null)
+
+    // Stable refs so the capture interval is never recreated on prop/state changes
+    const captureAndPredictRef = useRef(null)
+    const uploadedImageRef = useRef(uploadedImage)
+    const isAppReadyRef = useRef(isAppReady)
+
+    // Initialize FaceMesh
+    useEffect(() => {
+        if (!FaceMeshConstructor) {
+            console.error("FaceMesh constructor not found!");
+            return;
+        }
+        const faceMesh = new FaceMeshConstructor({
+            locateFile: (file) => {
+                // Serve strictly from Vite's local static public directory
+                // Avoids CDN race conditions (Assertion failed: undefined) and jsDelivr 302 redirects
+                return `/mediapipe/face_mesh/${file}`;
+            }
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults((results) => {
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                latestLandmarksRef.current = results.multiFaceLandmarks[0];
+            } else {
+                latestLandmarksRef.current = null;
+            }
+        });
+
+        faceMeshRef.current = faceMesh;
+        setIsFaceMeshReady(true);
+
+        return () => {
+            if (faceMeshRef.current) {
+                faceMeshRef.current.close();
+            }
+        };
+    }, []);
+
+    // Local Cropping Helper (Edge AI)
+    const performLocalCrop = useCallback((video, landmarks, featureType) => {
+        if (!canvasRef.current || !landmarks) return null;
+
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const vW = video.videoWidth;
+        const vH = video.videoHeight;
+
+        // Landmark indices for cropping
+        let indices = [];
+        if (featureType === 'EYE') indices = [33, 133, 159, 145]; // Left Eye
+        else if (featureType === 'MOUTH') indices = [61, 291, 0, 17]; // Outer Lips
+
+        // Calculate bbox of these landmarks
+        let minX = 1, minY = 1, maxX = 0, maxY = 0;
+        indices.forEach(idx => {
+            const pt = landmarks[idx];
+            minX = Math.min(minX, pt.x);
+            minY = Math.min(minY, pt.y);
+            maxX = Math.max(maxX, pt.x);
+            maxY = Math.max(maxY, pt.y);
+        });
+
+        // Add 50% padding
+        const width = (maxX - minX) * vW;
+        const height = (maxY - minY) * vH;
+        const centerX = ((minX + maxX) / 2) * vW;
+        const centerY = ((minY + maxY) / 2) * vH;
+
+        const side = Math.max(width, height) * 2.0;
+        const x = centerX - side / 2;
+        const y = centerY - side / 2;
+
+        // Normalized bbox of the crop region (for nerd mode overlay)
+        const cropBbox = [
+            Math.max(0, x / vW),
+            Math.max(0, y / vH),
+            Math.min(1, (x + side) / vW),
+            Math.min(1, (y + side) / vH)
+        ];
+
+        // Compute mouth open ratio (same formula as backend analyze_mouth)
+        // Landmarks: 13 = top lip inner, 14 = bottom lip inner, 10 = forehead, 152 = chin
+        let mouthOpenRatio = null;
+        if (featureType === 'MOUTH' && landmarks[13] && landmarks[14] && landmarks[10] && landmarks[152]) {
+            const topLip = landmarks[13];
+            const botLip = landmarks[14];
+            const faceH = Math.abs(landmarks[152].y - landmarks[10].y) * vH;
+            const mouthDist = Math.sqrt(
+                Math.pow((topLip.x - botLip.x) * vW, 2) +
+                Math.pow((topLip.y - botLip.y) * vH, 2)
+            );
+            mouthOpenRatio = mouthDist / (faceH + 1e-6);
+        }
+
+        // Perform Crop (224x224 standard)
+        canvas.width = 224;
+        canvas.height = 224;
+        ctx.drawImage(video, x, y, side, side, 0, 0, 224, 224);
+
+        return { dataUrl: canvas.toDataURL('image/jpeg', 0.85), cropBbox, mouthOpenRatio };
+    }, []);
 
     // Toggle Camera Callback
     const toggleCamera = useCallback(() => {
@@ -44,6 +162,9 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
         // Determine Source with validation
         let imageSrc = null;
+        let isLocalPreprocessed = false; // Local variable — never use window globals for this
+        let localCropBbox = null; // Normalized crop coordinates for nerd mode bbox overlay
+        let localMouthOpenRatio = null; // Mouth open ratio from FaceMesh (for TEETH mode gate)
         try {
             if (uploadedImage) {
                 // Validate uploaded image format
@@ -60,7 +181,28 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 }
                 imageSrc = uploadedImage;
             } else if (webcamRef.current) {
-                imageSrc = webcamRef.current.getScreenshot();
+                // EDGE AI: If FaceMesh has landmarks, and we are in a facial mode, crop LOCALLY
+                const landmarks = latestLandmarksRef.current;
+                // JAUNDICE_EYE excluded: its model needs dual inputs (skin + sclera)
+                // that only server-side SegFormer can provide
+                const facialModes = ['ORAL_CANCER', 'TEETH', 'CATARACT'];
+
+                if (landmarks && facialModes.includes(mode) && webcamRef.current.video) {
+                    const featureType = (mode === 'ORAL_CANCER' || mode === 'TEETH') ? 'MOUTH' : 'EYE';
+                    const cropResult = performLocalCrop(webcamRef.current.video, landmarks, featureType);
+                    if (cropResult) {
+                        imageSrc = cropResult.dataUrl;
+                        localCropBbox = cropResult.cropBbox;
+                        localMouthOpenRatio = cropResult.mouthOpenRatio;
+                        isLocalPreprocessed = true;
+                    }
+                }
+
+                if (!imageSrc) {
+                    imageSrc = webcamRef.current.getScreenshot();
+                    // isLocalPreprocessed stays false
+                }
+
                 if (!imageSrc) {
                     console.warn("Failed to capture screenshot from webcam");
                     return;
@@ -93,6 +235,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         setIsProcessing(true)
         setError(null)
         const startTime = Date.now()
+        const isPreprocessed = isLocalPreprocessed;
 
         try {
             // 1. DESKTOP BRIDGE (Native ONNX)
@@ -118,7 +261,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             }
 
             // 2. WEB API (Standard Flow)
-            console.log("Sending Request - Nerd Mode:", isNerdMode, "Mode:", mode);
+            console.log("Sending Request - Nerd Mode:", isNerdMode, "Mode:", mode, "Preprocessed:", isPreprocessed);
 
             // Add timeout and better error handling
             const controller = new AbortController();
@@ -128,7 +271,11 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 image: imageSrc,
                 mode: mode,
                 debug: isNerdMode, // Enable Grad-CAM/Stats if Nerd Mode is ON
-                is_upload: !!uploadedImage // True when using uploaded image (enables foot/nail fallback)
+                is_upload: !!uploadedImage, // True when using uploaded image (enables foot/nail fallback)
+                is_preprocessed: isPreprocessed, // Signal backend to skip landmarks
+                calibrate: isCalibrateEnabled,
+                crop_bbox: localCropBbox, // Normalized crop coords for nerd mode bbox (Edge AI path)
+                mouth_open_ratio: localMouthOpenRatio // Mouth open ratio for TEETH mode gate (Edge AI path)
             }, {
                 signal: controller.signal,
                 headers: {
@@ -271,15 +418,42 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 setError("Request Failed")
             }
         }
-    }, [mode, uploadedImage, isNerdMode])
+    }, [mode, uploadedImage, isNerdMode, isCalibrateEnabled])
 
-    // Auto-capture loop
+    // Keep refs in sync with the latest versions (no interval recreation needed)
+    useEffect(() => { captureAndPredictRef.current = captureAndPredict; }, [captureAndPredict])
+    useEffect(() => { uploadedImageRef.current = uploadedImage; }, [uploadedImage])
+    useEffect(() => { isAppReadyRef.current = isAppReady; }, [isAppReady])
+
+    // Auto-capture loop — stable interval created once, uses refs to stay current
     useEffect(() => {
-        const interval = setInterval(() => {
-            captureAndPredict()
+        const interval = setInterval(async () => {
+            // Don't fire requests until backend models are warm
+            if (!isAppReadyRef.current) return;
+
+            // Only proceed once the webcam video stream is actually playing
+            const isUploaded = !!uploadedImageRef.current;
+            const videoReady = !isUploaded &&
+                webcamRef.current &&
+                webcamRef.current.video &&
+                webcamRef.current.video.readyState === 4;
+
+            // Run MediaPipe inference in the background (webcam only)
+            if (faceMeshRef.current && videoReady) {
+                try {
+                    await faceMeshRef.current.send({ image: webcamRef.current.video });
+                } catch (e) {
+                    console.error("MediaPipe send error:", e);
+                }
+            }
+
+            // For webcam: skip until stream is ready to avoid null getScreenshot()
+            if (!isUploaded && !videoReady) return;
+
+            captureAndPredictRef.current?.()
         }, CAPTURE_INTERVAL)
         return () => clearInterval(interval)
-    }, [captureAndPredict])
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     // CRITICAL FIX: Reset ALL state when mode changes
     useEffect(() => {
@@ -296,6 +470,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         isProcessingRef.current = false;
         setIsProcessing(false);
         setShowRecs(false);
+        setIsCalibrateEnabled(false);
         lastRequestRef.current = { image: null, mode: null };
     }, [mode])
 
@@ -449,6 +624,23 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                             </button>
                         )}
 
+                        {/* Calibrate Lighting Toggle */}
+                        <button
+                            onClick={() => setIsCalibrateEnabled(!isCalibrateEnabled)}
+                            className={`p-2 rounded-xl transition-all duration-300 ${isCalibrateEnabled ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
+                            title="Calibrate Lighting (Color Constancy)"
+                        >
+                            <Sun size={18} className={isCalibrateEnabled ? 'animate-pulse' : ''} />
+                        </button>
+
+                        <button
+                            onClick={() => setIsNerdMode(!isNerdMode)}
+                            className={`p-2 rounded-xl transition-all duration-300 ${isNerdMode ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
+                            title="Nerd Mode (Debug)"
+                        >
+                            <Bug size={18} className={isNerdMode ? 'animate-pulse' : ''} />
+                        </button>
+
                         {setShowHelp && (
                             <button
                                 onClick={() => setShowHelp(true)}
@@ -562,6 +754,8 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                     </div>
                 </div>
             )}
+            {/* Hidden canvas for Edge AI cropping */}
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
         </div>
     )
 }

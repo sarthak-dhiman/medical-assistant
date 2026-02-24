@@ -42,7 +42,7 @@ _STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys.executable).parent
 else:
-    BASE_DIR = Path(os.getcwd())
+    BASE_DIR = Path(__file__).parent
 
 ONNX_PATH = BASE_DIR / "saved_models_onnx" / "segformer.onnx"
 
@@ -66,7 +66,12 @@ def _get_session() -> ort.InferenceSession | None:
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         opts.intra_op_num_threads = 4
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        try:
+            import torch
+            _cuda_ok = torch.cuda.is_available()
+        except Exception:
+            _cuda_ok = False
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if _cuda_ok else ["CPUExecutionProvider"]
         try:
             _session = ort.InferenceSession(str(ONNX_PATH), sess_options=opts, providers=providers)
             logger.info(f"SegFormer ONNX session: {_session.get_providers()[0]}")
@@ -177,7 +182,8 @@ class SegFormerWrapper:
 
             orig_h, orig_w = img_bgr.shape[:2]
             tensor = _preprocess(img_bgr)
-            logits = sess.run(None, {"pixel_values": tensor})[0]
+            input_name = sess.get_inputs()[0].name
+            logits = sess.run(None, {input_name: tensor})[0]
             return _postprocess(logits, orig_h, orig_w)
 
         except Exception as e:

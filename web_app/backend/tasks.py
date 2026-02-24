@@ -58,10 +58,59 @@ def encode_mask_b64(mask):
     except Exception:
         return None
 
-# --- Hand Detection Helper ---
-# Lazy initialization of MediaPipe Hands
+# --- Hand Detection ---
 mp_hands = None
 hands_detector = None
+
+# --- Privacy & Anonymization ---
+mp_face_det = None
+face_detector = None
+
+def get_face_detector():
+    global mp_face_det, face_detector
+    if face_detector is None:
+        try:
+            mp_face_det = mp.solutions.face_detection
+            face_detector = mp_face_det.FaceDetection(
+                model_selection=1, # 1 for far range (full skin photos), 0 for short
+                min_detection_confidence=0.5
+            )
+        except Exception as e:
+            logger.error(f"Failed to init Face Detector: {e}")
+            return None
+    return face_detector
+
+def _anonymize_face(image):
+    """
+    Detects and blurs faces in the image for privacy compliance.
+    """
+    try:
+        detector = get_face_detector()
+        if not detector: return image
+        
+        h, w = image.shape[:2]
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = detector.process(img_rgb)
+        
+        if results.detections:
+            for det in results.detections:
+                bboxC = det.location_data.relative_bounding_box
+                x, y, bw, bh = int(bboxC.left * w), int(bboxC.top * h), int(bboxC.width * w), int(bboxC.height * h)
+                
+                # Expand box slightly (20%)
+                x1 = max(0, x - int(bw * 0.1)); y1 = max(0, y - int(bh * 0.1))
+                x2 = min(w, x + bw + int(bw * 0.1)); y2 = min(h, y + bh + int(bh * 0.1))
+                
+                # Blur ROI
+                roi = image[y1:y2, x1:x2]
+                if roi.size > 0:
+                    roi = cv2.GaussianBlur(roi, (99, 99), 30)
+                    image[y1:y2, x1:x2] = roi
+                    logger.info("Face anonymized in non-facial scan.")
+        return image
+    except Exception as e:
+        logger.error(f"Anonymization failed: {e}")
+        return image
 
 def get_hand_detector():
     global mp_hands, hands_detector
@@ -71,14 +120,15 @@ def get_hand_detector():
             hands_detector = mp_hands.Hands(
                 static_image_mode=True,
                 max_num_hands=1,
-                min_detection_confidence=0.5
+                model_complexity=1,          # 1 = full model (more accurate than 0)
+                min_detection_confidence=0.3  # Lower threshold for better recall on webcam frames
             )
         except Exception as e:
             logger.error(f"Failed to init MediaPipe Hands: {e}")
             return None
     return hands_detector
 
-def    detect_hand_and_crop(image):
+def detect_hand_and_crop(image):
     """
     Detects hand in the image and returns a crop of the hand region.
     Falls back to center crop if no hand detected.
@@ -89,6 +139,8 @@ def    detect_hand_and_crop(image):
         detector = get_hand_detector()
         
         if detector:
+            h, w = image.shape[:2]
+            logger.info(f"Hand detection: input frame {w}x{h}")
             # Convert to RGB for MediaPipe
             img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             results = detector.process(img_rgb)
@@ -136,7 +188,11 @@ def    detect_hand_and_crop(image):
                 return crop, debug_info, bbox
                 
         # Fallback: Center Crop (50%)
-        h, w, _ = image.shape
+        if detector:
+            logger.info(f"Hand detection: no hand found in {w}x{h} frame, using center crop fallback")
+        else:
+            logger.warning("Hand detection: MediaPipe Hands not initialized, using center crop fallback")
+        h, w = image.shape[:2]
         cy, cx = h // 2, w // 2
         crop_h, crop_w = h // 2, w // 2
         
@@ -167,12 +223,12 @@ def    detect_hand_and_crop(image):
         return image, {"error": str(e)}, [0.0, 0.0, 1.0, 1.0]
 
 def load_models():
-    """Loads models once per worker process (Unified PyTorch Engine)."""
+    """Loads SegFormer once per heavy worker process."""
     global seg_model, init_errors
     
     temp_errors = []
     
-    # 0. SegFormer (Segmentation)
+    # SegFormer (Segmentation) — only needed by heavy workers
     if seg_model is None:
         try:
             from segformer_utils import SegFormerWrapper
@@ -183,20 +239,13 @@ def load_models():
             logger.error(err_msg)
             temp_errors.append(err_msg)
             
-            # DEBUG: Write error to file
             try:
                 with open("/app/saved_models/init_error.txt", "w") as f:
                     f.write(f"SegFormer Import Error: {e}\n")
                     import traceback
                     f.write(traceback.format_exc())
-            except Exception as file_err:
-                logger.error(f"Failed to write debug log: {file_err}")
-            
-    # Models are now loaded lazily via inference_service (thread-safe)
-    # We only need to warm up SegFormer here
-    
-    # Note: Jaundice and Skin models are loaded on-demand by inference_service
-    # with thread-safe locks, so we don't need to pre-load them here
+            except Exception:
+                pass
             
     for err in temp_errors:
         if err not in init_errors:
@@ -204,58 +253,85 @@ def load_models():
 
     return temp_errors
 
+
+def warmup_heavy_models():
+    """Eagerly load ONNX classifiers used by heavy worker (SegFormer modes)."""
+    from inference_pytorch import get_eye_session, get_body_session, get_skin_session
+    from inference_new_models import get_nail_session
+    loaded = []
+    for name, getter in [("jaundice_eye", get_eye_session),
+                         ("jaundice_body", get_body_session),
+                         ("skin_disease", get_skin_session),
+                         ("nail_disease", get_nail_session)]:
+        try:
+            sess = getter()
+            loaded.append(name if sess else f"{name}(FAIL)")
+        except Exception as e:
+            loaded.append(f"{name}(ERR:{e})")
+            logger.error(f"Warmup {name} failed: {e}")
+    # Also warm up MediaPipe Hands for nail disease hand detection
+    try:
+        detector = get_hand_detector()
+        loaded.append("mediapipe_hands" if detector else "mediapipe_hands(FAIL)")
+    except Exception as e:
+        loaded.append(f"mediapipe_hands(ERR:{e})")
+        logger.error(f"Warmup MediaPipe Hands failed: {e}")
+    logger.info(f"Heavy model warmup complete: {loaded}")
+
+
+def warmup_light_models():
+    """Eagerly load ONNX classifiers used by light worker."""
+    from inference_new_models import (get_nail_session, get_oral_session,
+                                      get_teeth_session, get_posture_session)
+    loaded = []
+    for name, getter in [("nail", get_nail_session),
+                         ("oral_cancer", get_oral_session),
+                         ("teeth", get_teeth_session),
+                         ("posture", get_posture_session)]:
+        try:
+            sess = getter()
+            loaded.append(name if sess else f"{name}(FAIL)")
+        except Exception as e:
+            loaded.append(f"{name}(ERR:{e})")
+            logger.error(f"Warmup {name} failed: {e}")
+    logger.info(f"Light model warmup complete: {loaded}")
+
 from celery.signals import worker_process_init
 
 @worker_process_init.connect
 def init_models(**kwargs):
     """
     EAGER LOADING:
-    Load all models immediately when the worker process starts.
-    This prevents the 'First Request Timeout' issue.
+    Load SegFormer only on heavy workers (q_heavy_cv) that need it for segmentation.
+    Light workers (q_lightweight) skip SegFormer to save ~325MB RAM per process.
+    ONNX classifiers load lazily on first request in all workers.
     """
-    logger.info("🚀 WORKER INIT: Eagerly loading AI Models...")
-    errors = load_models()
-    if errors:
-        logger.error(f"❌ WORKER INIT FAILED: {errors}")
+    # Check which queues this worker is consuming
+    queues = os.environ.get('CELERY_QUEUES', '')
+    # worker-heavy command includes '-Q q_heavy_cv,celery', worker-light uses '-Q q_lightweight'
+    is_heavy = 'q_heavy_cv' in queues or 'celery' in queues
+    
+    # Also detect from the celery worker command line args
+    import sys as _sys
+    cmd_line = ' '.join(_sys.argv)
+    if 'q_heavy_cv' in cmd_line:
+        is_heavy = True
+    elif 'q_lightweight' in cmd_line and 'q_heavy_cv' not in cmd_line:
+        is_heavy = False
+    
+    if is_heavy:
+        logger.info("🚀 HEAVY WORKER INIT: Loading SegFormer + classifiers...")
+        errors = load_models()
+        if errors:
+            logger.error(f"❌ WORKER INIT FAILED: {errors}")
+        else:
+            logger.info("✅ SegFormer Ready.")
+        warmup_heavy_models()
     else:
-        logger.info("✅ SegFormer Ready. Warming up Classification Models...")
-        try:
-            # Import getters directly from source modules to ensure availability inside containers
-            from inference_pytorch import get_eye_model, get_body_model, get_skin_model
-            # Import getters directly from source modules to ensure availability inside containers
-            from inference_pytorch import get_eye_model, get_body_model, get_skin_model
-            from inference_new_models import get_burns_model, get_nail_model, get_oral_cancer_model, get_teeth_model, get_posture_model
+        logger.info("🚀 LIGHT WORKER INIT: Loading classifiers (no SegFormer)...")
+        warmup_light_models()
 
-            # Trigger loading with timing logs
-            import time
-            warmup_funcs = [
-                ("eye_model", get_eye_model),
-                ("body_model", get_body_model),
-                ("skin_model", get_skin_model),
-                ("burns_model", get_burns_model),
-                ("nail_model", get_nail_model),
-                # cataract_model removed
-                ("oral_cancer_model", get_oral_cancer_model),
-                ("teeth_model", get_teeth_model),
-                ("posture_model", get_posture_model)
-            ]
-
-            total_start = time.time()
-            for name, fn in warmup_funcs:
-                try:
-                    start = time.time()
-                    fn()
-                    duration = time.time() - start
-                    logger.info(f"Warmup: {name} loaded in {duration:.3f}s")
-                except Exception as me:
-                    logger.warning(f"Warmup failed for {name}: {me}")
-
-            total_dur = time.time() - total_start
-            logger.info(f"✅ WORKER INIT SUCCESS: Models warmed up (total {total_dur:.3f}s)")
-        except Exception as e:
-            logger.error(f"⚠️ Model Warmup Partial Fail: {e}")
-
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, queue='q_lightweight')
 def check_model_health(self):
     """
     Simple probe to check if models are loaded in the worker.
@@ -270,12 +346,14 @@ def check_model_health(self):
            "omp_threads": os.environ.get("OMP_NUM_THREADS", "Not Set")
         },
         "errors": init_errors,
-        "ready": seg_model is not None and len(init_errors) == 0
+        # Health check runs on q_lightweight workers which don't need SegFormer.
+        # Report ready as long as there are no init errors.
+        "ready": len(init_errors) == 0
     }
     return status
 
-@celery_app.task(bind=True, max_retries=3)
-def predict_task(self, image_data_b64, mode, debug=False):
+@celery_app.task(bind=True, name='web_app.backend.tasks.predict_task', max_retries=3)
+def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, crop_bbox=None, mouth_open_ratio=None):
     """
     Celery task for prediction with comprehensive error handling and retry logic.
     """
@@ -332,16 +410,63 @@ def predict_task(self, image_data_b64, mode, debug=False):
         
         # Model availability checks - only SegFormer is managed here
         # Other models are loaded by inference_service on demand
+        # Skip check when client already pre-cropped the ROI (Edge AI path)
         if mode in ["JAUNDICE_EYE", "JAUNDICE_BODY", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
-            if not seg_model or not seg_model.is_ready:
+            if not is_preprocessed and (not seg_model or not seg_model.is_ready):
                 return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
         # Process based on mode
         # CATARACT case removed
+        # 0. HANDLE PRE-PROCESSED ROI (Client-side Edge AI path)
+        if is_preprocessed:
+            logger.info(f"Edge AI: Using pre-processed ROI for {mode}")
+            try:
+                if mode in ["ORAL_CANCER", "TEETH"]:
+                    if mode == "ORAL_CANCER":
+                        label, conf, debug_info = inference_service.predict_oral_cancer(frame, debug=debug, calibrate=calibrate, preprocessed=True)
+                    else: # TEETH
+                        # Check mouth open ratio from Edge AI before running inference
+                        if mouth_open_ratio is not None and mouth_open_ratio < 0.05:
+                            return {
+                                "status": "success", "mode": mode,
+                                "label": "Mouth Closed", "confidence": 0.0,
+                                "debug_info": {
+                                    "error": "Please open your mouth to inspect teeth.",
+                                    "mouth_open_ratio": float(mouth_open_ratio)
+                                },
+                                "bbox": crop_bbox
+                            }
+                        label, conf, debug_info = inference_service.predict_teeth_disease(frame, debug=debug, calibrate=calibrate, preprocessed=True)
+                    
+                    result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
+                    # Use client-side crop coordinates as bbox for nerd mode overlay
+                    if crop_bbox:
+                        result["bbox"] = crop_bbox
+                    recommendations = inference_service.get_recommendations(label)
+                    if recommendations: result["recommendations"] = recommendations
+                    return result
+                
+                elif mode in ["JAUNDICE_EYE", "CATARACT"]:
+                    # For eye-based modes, we use the crop directly
+                    if mode == "JAUNDICE_EYE":
+                        label, conf, debug_info = inference_service.predict_jaundice_eye(frame, frame, debug=debug, calibrate=calibrate)
+                    else: # CATARACT
+                        label, conf, debug_info = inference_service.predict_cataract(frame, debug=debug, calibrate=calibrate)
+                    
+                    result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
+                    recommendations = inference_service.get_recommendations(label)
+                    if recommendations: result["recommendations"] = recommendations
+                    return result
+                    
+            except Exception as e:
+                logger.error(f"Edge AI shortcut failed: {e}")
+                # Fallback to normal processing if shortcut fails
+
+        # 1. ORAL / TEETH DIRECT (Fallback or Non-Preprocessed)
         if mode == "ORAL_CANCER":
             # Oral cancer is a direct classification on oral cavity images
             try:
-                label, conf, debug_info = inference_service.predict_oral_cancer(frame, debug=debug)
+                label, conf, debug_info = inference_service.predict_oral_cancer(frame, debug=debug, calibrate=calibrate)
                 result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
                 if "bbox" in debug_info:
                     result["bbox"] = debug_info["bbox"]
@@ -355,7 +480,7 @@ def predict_task(self, image_data_b64, mode, debug=False):
         elif mode == "TEETH":
             # Teeth disease is a direct classification on teeth/mouth images
             try:
-                label, conf, debug_info = inference_service.predict_teeth_disease(frame, debug=debug)
+                label, conf, debug_info = inference_service.predict_teeth_disease(frame, debug=debug, calibrate=calibrate)
                 result = {"status": "success", "mode": mode, "label": label, "confidence": float(conf), "debug_info": debug_info}
                 if "bbox" in debug_info:
                     result["bbox"] = debug_info["bbox"]
@@ -366,10 +491,15 @@ def predict_task(self, image_data_b64, mode, debug=False):
             except Exception as e:
                 logger.error(f"Teeth disease processing error: {e}")
                 return {"status": "error", "error": f"Teeth disease detection failed: {str(e)}"}
+        elif mode == "CATARACT":
+            return _process_cataract(frame, debug, calibrate=calibrate)
         elif mode == "POSTURE":
             return _process_posture(frame, w, h, debug, result)
         elif mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
-            return _process_segmentation_mode(frame, mode, debug)
+            # Apply Anonymization for potentially sensitive non-facial scans
+            if mode in ["SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
+                frame = _anonymize_face(frame)
+            return _process_segmentation_mode(frame, mode, debug, calibrate)
         else:
             return {"status": "error", "error": f"Unknown mode: {mode}"}
             
@@ -386,7 +516,7 @@ def predict_task(self, image_data_b64, mode, debug=False):
         return {"status": "error", "error": f"Task failed after retries: {str(e)}"}
 
 
-def _process_segmentation_mode(frame, mode, debug):
+def _process_segmentation_mode(frame, mode, debug, calibrate=False):
     """Process image for segmentation-based modes with comprehensive error handling."""
     result = {"status": "success", "mode": mode}
     
@@ -398,36 +528,26 @@ def _process_segmentation_mode(frame, mode, debug):
             # Optimization: Downscale for SegFormer
             INFERENCE_WIDTH = 480
             scale = INFERENCE_WIDTH / w
-            if scale < 1.0:
-                small_frame = cv2.resize(frame, (0,0), fx=scale, fy=scale)
-            else:
-                small_frame = frame
-                
-            mask_small = seg_model.predict(small_frame)
-            mask = cv2.resize(mask_small, (w, h), interpolation=cv2.INTER_NEAREST)
+            # Get mask from SegFormer
+            if not seg_model: return {"status": "error", "error": "SegModel not loaded"}
+            mask = seg_model.predict(frame)
             
-            # Skin Mask (Semantic) - Face/Neck
-            skin_mask_sem = seg_model.get_skin_mask(mask)
-            
-            # Skin Mask (Color) - Arms/Hands/Legs
-            # Always compute this to capture non-face skin
+            # Additional skin-color-based mask for robustness
             skin_mask_color = seg_model.get_skin_mask_color(frame)
-            
-            # Combine: Union of both methods
-            # This ensures we get high-quality face mask + color-based body mask
-            skin_mask = cv2.bitwise_or(skin_mask_sem, skin_mask_color)
+            skin_mask_seg = seg_model.get_skin_mask(mask)
+            skin_mask = cv2.bitwise_or(skin_mask_color, skin_mask_seg)
             
             # Process based on specific mode
             if mode == "JAUNDICE_BODY":
-                return _process_jaundice_body(frame, skin_mask, w, h, debug, result)
+                return _process_jaundice_body(frame, skin_mask, w, h, debug, result, calibrate)
             elif mode == "JAUNDICE_EYE":
-                return _process_jaundice_eye(frame, skin_mask, w, h, debug, result)
+                return _process_jaundice_eye(frame, skin_mask, w, h, debug, result, calibrate)
             elif mode == "SKIN_DISEASE":
-                return _process_skin_disease(frame, skin_mask, w, h, debug, result)
+                return _process_skin_disease(frame, skin_mask, w, h, debug, result, calibrate)
             elif mode == "BURNS":
-                return _process_burns(frame, skin_mask, w, h, debug, result)
+                return _process_burns(frame, skin_mask, w, h, debug, result, calibrate)
             elif mode == "NAIL_DISEASE":
-                return _process_nail_disease(frame, skin_mask, w, h, debug, result)
+                return _process_nail_disease(frame, skin_mask, w, h, debug, result, calibrate)
         
         return result
         
@@ -436,7 +556,7 @@ def _process_segmentation_mode(frame, mode, debug):
         return {"status": "error", "error": f"Processing failed: {str(e)}"}
 
 
-def _process_jaundice_body(frame, skin_mask, w, h, debug, result):
+def _process_jaundice_body(frame, skin_mask, w, h, debug, result, calibrate=False):
     """Process jaundice body detection."""
     try:
         # 1. Get Person Mask (MediaPipe)
@@ -463,7 +583,7 @@ def _process_jaundice_body(frame, skin_mask, w, h, debug, result):
                 crop = crop[:, :, :3]
             
             # Use inference service for prediction
-            label, conf, debug_info = inference_service.predict_jaundice_body(crop, debug=debug)
+            label, conf, debug_info = inference_service.predict_jaundice_body(crop, debug=debug, calibrate=calibrate)
             
             # Add Masks to debug_info
             if "masks" not in debug_info: debug_info["masks"] = {}
@@ -486,7 +606,7 @@ def _process_jaundice_body(frame, skin_mask, w, h, debug, result):
         return {"status": "error", "error": f"Jaundice body detection failed: {str(e)}"}
 
 
-def _process_jaundice_eye(frame, skin_mask, w, h, debug, result):
+def _process_jaundice_eye(frame, skin_mask, w, h, debug, result, calibrate=False):
     """Process jaundice eye detection."""
     try:
         # 1. Extract Skin Crop (Context for Model)
@@ -503,7 +623,9 @@ def _process_jaundice_eye(frame, skin_mask, w, h, debug, result):
         
         if not eyes:
             used_mediapipe = False
-            raw_eyes = seg_model.get_eye_rois(mask, frame)
+            # Run SegFormer to get the raw class mask for eye ROI extraction
+            seg_mask = seg_model.predict(frame)
+            raw_eyes = seg_model.get_eye_rois(seg_mask, frame)
             for cropped_eye, name, bbox in raw_eyes:
                 masked, _ = seg_model.apply_iris_mask(cropped_eye)
                 eyes.append((masked, name, bbox))
@@ -525,7 +647,7 @@ def _process_jaundice_eye(frame, skin_mask, w, h, debug, result):
                 skin_crop = frame 
 
             # Use inference service for prediction
-            label, conf, debug_info = inference_service.predict_jaundice_eye(skin_crop, cropped_eye_masked, debug=debug)
+            label, conf, debug_info = inference_service.predict_jaundice_eye(skin_crop, cropped_eye_masked, debug=debug, calibrate=calibrate)
             
             # Add Eye Mask to debug_info
             if "masks" not in debug_info: debug_info["masks"] = {}
@@ -569,7 +691,7 @@ def _process_jaundice_eye(frame, skin_mask, w, h, debug, result):
         return {"status": "error", "error": f"Jaundice eye detection failed: {str(e)}"}
 
 
-def _process_skin_disease(frame, skin_mask, w, h, debug, result):
+def _process_skin_disease(frame, skin_mask, w, h, debug, result, calibrate=False):
     """Process skin disease detection."""
     try:
         if cv2.countNonZero(skin_mask) > 100:
@@ -586,7 +708,7 @@ def _process_skin_disease(frame, skin_mask, w, h, debug, result):
                 crop = crop[:, :, :3]
             
             # Use inference service for prediction
-            label, conf, debug_info = inference_service.predict_skin_disease(crop, debug=debug)
+            label, conf, debug_info = inference_service.predict_skin_disease(crop, debug=debug, calibrate=calibrate)
             
             if "masks" not in debug_info: debug_info["masks"] = {}
             debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
@@ -614,7 +736,7 @@ def _process_skin_disease(frame, skin_mask, w, h, debug, result):
         return {"status": "error", "error": f"Skin disease detection failed: {str(e)}"}
 
 
-def _process_burns(frame, skin_mask, w, h, debug, result):
+def _process_burns(frame, skin_mask, w, h, debug, result, calibrate=False):
     """Process burns detection."""
     try:
         skin_pixels = cv2.countNonZero(skin_mask)
@@ -635,7 +757,7 @@ def _process_burns(frame, skin_mask, w, h, debug, result):
                 crop = crop[:, :, :3]
             
             # Use inference service for prediction
-            label, conf, debug_info = inference_service.predict_burns(crop, debug=debug)
+            label, conf, debug_info = inference_service.predict_burns(crop, debug=debug, calibrate=calibrate)
             
             if "masks" not in debug_info: debug_info["masks"] = {}
             debug_info["masks"]["skin_mask"] = encode_mask_b64(skin_mask)
@@ -663,7 +785,7 @@ def _process_burns(frame, skin_mask, w, h, debug, result):
         return {"status": "error", "error": f"Burns detection failed: {str(e)}"}
 
 
-def _process_nail_disease(frame, skin_mask, w, h, debug, result):
+def _process_nail_disease(frame, skin_mask, w, h, debug, result, calibrate=False):
     """Process nail disease detection with hand detection first."""
     try:
         # 1. Detect Hand
@@ -678,7 +800,7 @@ def _process_nail_disease(frame, skin_mask, w, h, debug, result):
             return result
 
         # 2. Use hand crop for prediction
-        label, conf, debug_info = inference_service.predict_nail_disease(hand_crop, debug=debug)
+        label, conf, debug_info = inference_service.predict_nail_disease(hand_crop, debug=debug, calibrate=calibrate)
         
         # Merge debug infos
         final_debug = {**hand_debug, **debug_info}
@@ -698,7 +820,7 @@ def _process_nail_disease(frame, skin_mask, w, h, debug, result):
         return {"status": "error", "error": f"Nail disease detection failed: {str(e)}"}
 
 
-def _process_cataract(frame, debug):
+def _process_cataract(frame, debug, calibrate=False):
     """Process cataract detection from eye image.
     
     Cataract detection doesn't require body segmentation - it works directly
@@ -708,7 +830,7 @@ def _process_cataract(frame, debug):
     
     try:
         # Direct inference on the input frame (expected to be eye image)
-        label, conf, debug_info = inference_service.predict_cataract(frame, debug=debug)
+        label, conf, debug_info = inference_service.predict_cataract(frame, debug=debug, calibrate=calibrate)
         
         result.update({
             "label": label,

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import WebcamCapture from '../WebcamCapture'
 import ModelSelector from '../ModelSelector'
+import LoadingOverlay from '../components/LoadingOverlay'
 import { Upload, X, Activity, Bug, HelpCircle } from 'lucide-react'
 
 function ManualDetection() {
@@ -52,6 +53,9 @@ function ManualDetection() {
 
     return (
         <div className="relative w-full h-full flex flex-col bg-gray-950 text-white font-sans overflow-hidden">
+
+            {/* Block UI until models are warm */}
+            {!isAppReady && <LoadingOverlay />}
 
             {/* Main Content Area */}
             <main className="flex-1 flex flex-col lg:flex-row lg:max-w-[1500px] lg:mx-auto w-full p-0 lg:px-4 lg:py-6 gap-0 lg:gap-6 overflow-hidden relative">
@@ -119,6 +123,7 @@ function ManualDetection() {
                         isNerdMode={isNerdMode}
                         setIsNerdMode={setIsNerdMode}
                         setShowHelp={setShowHelp}
+                        isAppReady={isAppReady}
                     />
                 </div>
 
