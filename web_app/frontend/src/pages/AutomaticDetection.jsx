@@ -188,9 +188,21 @@ function AutomaticDetection() {
 
                             <div className="flex flex-col flex-1">
                                 <span className="text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Diagnosis</span>
-                                <h3 className="text-xl md:text-3xl font-black text-white leading-none tracking-tight">
-                                    {result.label}
-                                </h3>
+                                <div className="flex items-center gap-3">
+                                    <h3 className="text-xl md:text-3xl font-black text-white leading-none tracking-tight">
+                                        {result.label}
+                                    </h3>
+                                    {result.triage && (
+                                        <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded border ${result.triage.color}`}>
+                                            {result.triage.level}
+                                        </span>
+                                    )}
+                                </div>
+                                {result.triage && (
+                                    <p className="text-xs text-gray-400 mt-1 mb-1 italic">
+                                        {result.triage.message}
+                                    </p>
+                                )}
                                 <div className="flex items-center gap-2 mt-2">
                                     <div className="h-1.5 flex-1 bg-gray-800 rounded-full overflow-hidden">
                                         <div
@@ -199,7 +211,7 @@ function AutomaticDetection() {
                                             style={{ width: `${(result.confidence || 0) * 100}%` }}
                                         ></div>
                                     </div>
-                                    <span className="text-[10px] font-bold text-gray-400">
+                                    <span className="text-[10px] font-bold text-gray-400 shrink-0">
                                         {((result.confidence || 0) * 100).toFixed(1)}% CONFIDENCE
                                     </span>
                                 </div>

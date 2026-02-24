@@ -20,6 +20,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const [isGPUFull, setIsGPUFull] = useState(false)
     const [showRecs, setShowRecs] = useState(false)
     const [isFaceMeshReady, setIsFaceMeshReady] = useState(false)
+    const [isInfant, setIsInfant] = useState(false)
 
     // Refs for MediaPipe
     const faceMeshRef = useRef(null)
@@ -274,6 +275,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 is_upload: !!uploadedImage, // True when using uploaded image (enables foot/nail fallback)
                 is_preprocessed: isPreprocessed, // Signal backend to skip landmarks
                 calibrate: isCalibrateEnabled,
+                is_infant: isInfant, // Demographic routing for Adult Jaundice -> Skin Disease
                 crop_bbox: localCropBbox, // Normalized crop coords for nerd mode bbox (Edge AI path)
                 mouth_open_ratio: localMouthOpenRatio // Mouth open ratio for TEETH mode gate (Edge AI path)
             }, {
@@ -472,6 +474,13 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         setShowRecs(false);
         setIsCalibrateEnabled(false);
         lastRequestRef.current = { image: null, mode: null };
+
+        // Default to Infant=true for Jaundice modes
+        if (mode === "JAUNDICE_BODY" || mode === "JAUNDICE_EYE") {
+            setIsInfant(true);
+        } else {
+            setIsInfant(false);
+        }
     }, [mode])
 
     // Status Helper
@@ -487,9 +496,9 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const getInstructions = () => {
         switch (mode) {
             case "JAUNDICE_EYE":
-                return "Come closer & remove glasses. Best for adults.";
+                return isInfant ? "Come closer. Best for babies." : "Routing to Adult Skin Model.";
             case "JAUNDICE_BODY":
-                return "Ensure good lighting. Show face or skin clearly. Best for babies.";
+                return isInfant ? "Ensure good lighting. Show face or skin clearly. Best for babies." : "Routing to Adult Skin Model.";
             case "SKIN_DISEASE":
                 return "Focus camera on affected area. Keep steady.";
             case "NAIL_DISEASE":
@@ -633,6 +642,17 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                             <Sun size={18} className={isCalibrateEnabled ? 'animate-pulse' : ''} />
                         </button>
 
+                        {/* Demographic Toggle (Only visible for Jaundice Modes) */}
+                        {(mode === "JAUNDICE_BODY" || mode === "JAUNDICE_EYE") && (
+                            <button
+                                onClick={() => setIsInfant(!isInfant)}
+                                className={`p-2 rounded-xl transition-all duration-300 font-bold text-[10px] uppercase tracking-wider flex items-center justify-center min-w-[60px] ${isInfant ? 'bg-pink-500/20 text-pink-400 border border-pink-500/50' : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'}`}
+                                title={isInfant ? "Neonatal Mode (Babies)" : "Adult Mode"}
+                            >
+                                {isInfant ? "👶 Infant" : "👤 Adult"}
+                            </button>
+                        )}
+
                         <button
                             onClick={() => setIsNerdMode(!isNerdMode)}
                             className={`p-2 rounded-xl transition-all duration-300 ${isNerdMode ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
@@ -661,12 +681,26 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
                             <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-2">AI Diagnosis</p>
                             <div className="flex items-center justify-between gap-4">
-                                <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
-                                    ? 'text-red-400' : 'text-green-400'
-                                    }`}>
-                                    {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}
-                                </p>
-                                <span className="text-sm font-black text-white/40">
+                                <div className="flex flex-col">
+                                    <div className="flex items-center gap-2">
+                                        <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
+                                            ? 'text-red-400' : 'text-green-400'
+                                            }`}>
+                                            {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}
+                                        </p>
+                                        {result.triage && (
+                                            <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md border ${result.triage.color}`}>
+                                                {result.triage.level}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {result.triage && (
+                                        <p className="text-xs text-gray-400 mt-1 italic leading-tight">
+                                            {result.triage.message}
+                                        </p>
+                                    )}
+                                </div>
+                                <span className="text-sm font-black text-white/40 shrink-0">
                                     {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
                                 </span>
                             </div>

@@ -181,8 +181,58 @@ def ensure_3channel(img: np.ndarray) -> np.ndarray:
     if img.shape[2] == 4: return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
     return img
 
-def apply_color_constancy(img_bgr: np.ndarray) -> np.ndarray:
-    """Gray World Color Constancy."""
+def apply_shades_of_gray(img_bgr: np.ndarray, p: int = 6) -> np.ndarray:
+    """
+    Shades of Gray Color Constancy algorithm.
+    More robust than Gray World, especially for skin tones under varied clinical lighting.
+    Minkowski norm p=6 is typical for SoG. p=1 is equivalent to Gray World, p=infinity is Max-RGB.
+    """
+    try:
+        img_float = img_bgr.astype(np.float32)
+        # Calculate Minkowski norm for each channel
+        pow_b = np.power(img_float[:, :, 0], p)
+        pow_g = np.power(img_float[:, :, 1], p)
+        pow_r = np.power(img_float[:, :, 2], p)
+        
+        # Mean of powered channels
+        mean_b = np.mean(pow_b)
+        mean_g = np.mean(pow_g)
+        mean_r = np.mean(pow_r)
+        
+        # Illumination estimate (p-th root)
+        ill_b = np.power(mean_b, 1.0/p)
+        ill_g = np.power(mean_g, 1.0/p)
+        ill_r = np.power(mean_r, 1.0/p)
+        
+        # Normalize to preserve overall luminance
+        ill_norm = np.sqrt(ill_b**2 + ill_g**2 + ill_r**2)
+        if ill_norm == 0 or ill_b == 0 or ill_g == 0 or ill_r == 0:
+            return img_bgr 
+            
+        # Target gray (normalized scaling factor)
+        ill_b = ill_b / ill_norm
+        ill_g = ill_g / ill_norm
+        ill_r = ill_r / ill_norm
+        
+        # We want the color to scale so the illumination becomes "white" (1/sqrt(3))
+        target_ill = 1.0 / np.sqrt(3.0)
+        
+        img_float[:, :, 0] *= (target_ill / ill_b)
+        img_float[:, :, 1] *= (target_ill / ill_g)
+        img_float[:, :, 2] *= (target_ill / ill_r)
+        
+        return np.clip(img_float, 0, 255).astype(np.uint8)
+    except Exception as e:
+        logger.error(f"Shades of Gray failed: {e}")
+        return img_bgr
+
+
+def apply_color_constancy(img_bgr: np.ndarray, method="shades_of_gray") -> np.ndarray:
+    """Color Constancy router."""
+    if method == "shades_of_gray":
+        return apply_shades_of_gray(img_bgr, p=6)
+    
+    # Fallback to Gray World
     try:
         img_float = img_bgr.astype(np.float32)
         avg_b = np.mean(img_float[:, :, 0])

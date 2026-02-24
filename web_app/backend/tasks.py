@@ -37,6 +37,7 @@ sys.path.append(str(PROJECT_ROOT))
 
 # Import inference service layer
 from .inference_service import inference_service
+from .triage_engine import ClinicalTriageEngine
 
 # Lazy Global Models (Segmentation only - inference delegated to service)
 seg_model = None
@@ -353,10 +354,31 @@ def check_model_health(self):
     return status
 
 @celery_app.task(bind=True, name='web_app.backend.tasks.predict_task', max_retries=3)
-def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, crop_bbox=None, mouth_open_ratio=None):
+def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, crop_bbox=None, mouth_open_ratio=None, is_infant=False):
     """
-    Celery task for prediction with comprehensive error handling and retry logic.
+    Celery task wrapper that injects Clinical Triage validation into the core sequence.
     """
+    # 1. Execute the core heavy lifting
+    result = _core_predict_task(self, image_data_b64, mode, debug, is_preprocessed, calibrate, crop_bbox, mouth_open_ratio, is_infant)
+    
+    logger.info(f"Wrapper received result type {type(result)} with status {result.get('status') if isinstance(result, dict) else 'none'}")
+
+    # 2. Inject triage badge if applicable
+    if isinstance(result, dict) and result.get("status") == "success":
+        label = result.get("label", "")
+        conf = float(result.get("confidence", 0.0))
+        # Support array of targets (eyes) if multiple found
+        if result.get("eyes"):
+            for eye in result["eyes"]:
+                eye_label = eye.get("label", "")
+                eye_conf = float(eye.get("confidence", 0.0))
+                eye["triage"] = ClinicalTriageEngine.evaluate(eye_label, eye_conf)
+        else:
+            result["triage"] = ClinicalTriageEngine.evaluate(label, conf)
+        
+    return result
+
+def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, crop_bbox=None, mouth_open_ratio=None, is_infant=False):
     try:
         # Validate inputs
         if not image_data_b64 or not isinstance(image_data_b64, str):
@@ -496,6 +518,21 @@ def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False,
         elif mode == "POSTURE":
             return _process_posture(frame, w, h, debug, result)
         elif mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
+            # Demographic Routing: Adult Jaundice suspects go through Skin Disease model instead
+            if mode in ["JAUNDICE_BODY", "JAUNDICE_EYE"] and not is_infant:
+                logger.info(f"Demographic Routing: Adult suspect for Jaundice -> Rerouting from {mode} to SKIN_DISEASE")
+                # We can inject a hint into the debug payload so the frontend knows it was routed
+                debug_info_routing = {"routed_from": mode, "reason": "Adult Demographic Toggle"}
+                
+                # Apply Anonymization for potentially sensitive non-facial scans
+                frame = _anonymize_face(frame)
+                res = _process_segmentation_mode(frame, "SKIN_DISEASE", debug, calibrate)
+                if isinstance(res, dict) and "debug_info" not in res:
+                    res["debug_info"] = debug_info_routing
+                elif isinstance(res, dict) and isinstance(res.get("debug_info"), dict):
+                    res["debug_info"].update(debug_info_routing)
+                return res
+
             # Apply Anonymization for potentially sensitive non-facial scans
             if mode in ["SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
                 frame = _anonymize_face(frame)

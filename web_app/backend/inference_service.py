@@ -142,7 +142,7 @@ class InferenceService:
             return "Error", 0.0, {"error": str(e)}
     
     @staticmethod
-    def get_recommendations(label):
+    def get_recommendations(label: str, mode: str = None):
         """
         Fetch recommendations and explanations from the knowledge base.
         """
@@ -172,10 +172,24 @@ class InferenceService:
             "Oral_Cancer": "Oral_Cancer"
         }
         
-        kb_key = label_mapping.get(label)
-        if not kb_key:
-             clean_label = label.replace(" ", "_")
-             kb_key = label_mapping.get(clean_label) or clean_label
+        # Handle generic labels mapped based on the diagnostic mode
+        if label == "Normal":
+            if mode == "ORAL_CANCER":
+                kb_key = "Normal_Oral"
+            elif mode == "CATARACT":
+                kb_key = "Normal_Cataract"
+            else:
+                kb_key = "Normal"
+        elif label == "Healthy":
+            if mode == "TEETH":
+                kb_key = "Healthy_Teeth"
+            else:
+                kb_key = "Healthy"
+        else:
+            kb_key = label_mapping.get(label)
+            if not kb_key:
+                 clean_label = label.replace(" ", "_")
+                 kb_key = label_mapping.get(clean_label) or clean_label
         
         try:
             if kb_path.exists():
