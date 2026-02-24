@@ -22,9 +22,11 @@ services:
       - ./external:/app/external # Mount external repos (YOLOv7)
     environment:
       - REDIS_URL=redis://redis:6379/0
-      # Security: Allow frontend access
       - ALLOWED_ORIGINS=http://localhost:5173
       - ALLOW_ALL_ORIGINS=True
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ENABLE_LLM_EXPLANATIONS=${ENABLE_LLM_EXPLANATIONS}
+
       # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -69,9 +71,11 @@ services:
       - hf_cache:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379/0
-      # GPU Support Enabled
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ENABLE_LLM_EXPLANATIONS=${ENABLE_LLM_EXPLANATIONS}
+
       - OMP_NUM_THREADS=4
       - TZ=${TZ:-UTC}
       # Fix for ONNXRuntime missing libnvrtc.so and libcudnn:
@@ -104,9 +108,11 @@ services:
       - ./external:/app/external
     environment:
       - REDIS_URL=redis://redis:6379/0
-      # GPU Support (even light models benefit from ORT-GPU)
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ENABLE_LLM_EXPLANATIONS=${ENABLE_LLM_EXPLANATIONS}
+
       - OMP_NUM_THREADS=4
       - TZ=${TZ:-UTC}
       # Fix for ONNXRuntime missing libnvrtc.so and libcudnn:

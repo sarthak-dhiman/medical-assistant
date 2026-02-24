@@ -14,6 +14,12 @@ import json
 import threading
 import base64
 import logging
+import torch
+import torch.nn as nn
+try:
+    import timm
+except ImportError:
+    timm = None
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +169,40 @@ def get_skin_session() -> ort.InferenceSession | None:
         else:
             logger.error("Skin Disease ONNX session creation failed.")
     return _sess_skin
+
+# --- PyTorch MC Dropout Fallbacks ---
+class SkinDiseaseModel(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        if not timm: raise ImportError("timm required")
+        self.backbone = timm.create_model("efficientnet_b4", pretrained=False, num_classes=0)
+        self.classifier = nn.Sequential(
+            nn.Linear(self.backbone.num_features, 512), nn.ReLU(),
+            nn.Dropout(0.4), nn.Linear(512, num_classes)
+        )
+    def forward(self, x):
+        return self.classifier(self.backbone(x))
+
+_torch_skin_model = None
+def get_torch_skin_model():
+    global _torch_skin_model, _skin_classes
+    if _torch_skin_model is not None: return _torch_skin_model
+    if timm is None: return None
+    
+    pth_path = BASE_DIR / "saved_models" / "skin_disease_pytorch.pth"
+    if not pth_path.exists(): return None
+        
+    try:
+        num_classes = len(_skin_classes) if _skin_classes else 38
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model = SkinDiseaseModel(num_classes).to(device)
+        model.load_state_dict(torch.load(pth_path, map_location=device, weights_only=True))
+        _torch_skin_model = model
+        logger.info(f"Skin PyTorch loaded for MC Dropout on {device}.")
+        return _torch_skin_model
+    except Exception as e:
+        logger.error(f"Failed to load PyTorch Skin model: {e}")
+        return None
 
 # --- Preprocessing ---
 
@@ -450,6 +490,31 @@ def predict_skin_disease_torch(img_bgr: np.ndarray, debug=False, calibrate=False
         "threshold_used": threshold,
         "class_index": idx,
     }
+
+    # --- MC Dropout Uncertainty Estimation ---
+    # Only run in Nerd Mode (debug=True) to avoid 5x latency penalty for normal users
+    if debug:
+        try:
+            torch_model = get_torch_skin_model()
+            if torch_model is not None:
+                torch_model.train() # Enable Dropout layers natively
+                d_device = next(torch_model.parameters()).device
+                t_input = torch.from_numpy(tensor).to(d_device)
+                
+                mc_probs = []
+                with torch.no_grad():
+                    for _ in range(5):
+                        t_logits = torch_model(t_input)[0]
+                        scaled_logits = t_logits / TEMPERATURE
+                        t_probs = torch.softmax(scaled_logits, dim=0).cpu().numpy()
+                        mc_probs.append(t_probs[idx])
+                
+                variance = float(np.var(mc_probs))
+                debug_info["uncertainty_score"] = float(f"{variance:.5f}")
+                logger.info(f"[MC DROPOUT] Mode: Skin | Var: {variance:.5f}")
+        except Exception as e:
+            logger.error(f"MC Dropout variance calculation failed: {e}")
+
 
     # Top-3 for Nerd Mode
     try:

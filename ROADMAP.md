@@ -12,13 +12,13 @@
 - [x] Tiered API Routing (Asynchronous Queues): Configure multiple Celery queues (`q_lightweight`, `q_heavy_cv`) to prevent fast tasks (Posture) from lagging behind heavy diagnostic tasks (Derm1M). Route backend endpoints accordingly.
 
 ## Phase 2: Edge Computing & Data Privacy
-- [x] Client-Side Pre-Processing (Edge AI Shift): Integrate `MediaPipe for Web` or `ONNX.js` into the React frontend. Run face mesh locally to crop eyes/mouth off user's webcam, so only a tiny `224x224` tensor is transmitted over the network (massively reducing Redis/Bandwidth chokes).
+- [x] Client-Side Pre-Processing (Edge AI Shift): Integrated MediaPipe FaceMesh into React frontend. FaceMesh crops eyes (JAUNDICE_EYE) and mouth (ORAL/TEETH) locally, reducing payload sizes.
 - [ ] Zero-Trace Medical Anonymization (HIPAA/GDPR): Build a post-inference Celery pipeline that automatically detects and permanently blitzes/blurs faces in the background of skin/chest/arm diagnostic photos before any theoretical storage to an S3 bucket (Data Flywheel).
 
 ## Phase 3: The "Assistant" Experience & Clinical Calibration
-- [x] Neonatal & Lighting Calibration Pipeline: Introduce Color Constancy algorithms (Gray World / Shades of Gray) to mathematically strip lighting temperatures before inference. Add an `Infant / Adult` demographic toggle to route accurately for Jaundice vs normal adult Skin models.
-- [ ] Decision Layer (Clinical Triage Engine): Rule-based system for cross-model reasoning and high-priority referral handling.
-- [ ] LLM Medical Explanation Layer: Heavily constrained medical LLM for plain text explanations.
+- [x] Neonatal & Lighting Calibration Pipeline: Introduce Color Constancy algorithms (Gray World / Shades of Gray) to mathematically strip lighting temperatures before inference.
+- [x] Decision Layer (Clinical Triage Engine): Rule-based system for cross-model reasoning and high-priority referral handling (Implementation started in `triage_engine.py`).
+- [x] LLM Medical Explanation Layer: Heavily constrained medical LLM for plain text explanations.
 
 ## Phase 4: Advanced AI Capabilities
 - [ ] Multi-Modal AI Fusion: Add patient history questionnaire.
@@ -58,3 +58,17 @@
 	- Provide a configurable dashboard of false-positive / false-negative rates and a simple threshold tuning UI.
 
 This phase provides a fast path to actionable postural screening while preserving explainability and minimizing data/regulatory risk.
+
+## Phase 6: 
+Hosting and Deployment
+- [ ] Deploy the application to a cloud platform (AWS, GCP, Azure).
+- [ ] Set up a domain name and SSL certificate.
+- [ ] Configure monitoring and alerting.
+- [ ] Set up CI/CD pipeline for automated deployment.
+
+## Phase 7: 
+User data training
+- [ ] Collect user data (with consent).
+- [ ] Train models on user data.
+- [ ] Evaluate models on user data.
+- [ ] Deploy models to production.

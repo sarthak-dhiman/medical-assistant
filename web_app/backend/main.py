@@ -52,7 +52,8 @@ class PredictRequest(BaseModel):
     is_upload: bool = False # Flag if image was uploaded or taken from webcam
     crop_bbox: list | None = None # Normalized crop coordinates from Edge AI [x1,y1,x2,y2]
     mouth_open_ratio: float | None = None # Mouth open ratio from Edge AI FaceMesh (for TEETH mode gate)
-    is_infant: bool = False # Demographic flag for Jaundice inference routing
+    patient_history: str | None = None # Optional user-provided symptom history
+
 
     @validator('image')
     def validate_image(cls, v):
@@ -113,7 +114,7 @@ async def predict_endpoint(request: PredictRequest):
         queue = "q_heavy_cv" if request.mode in heavy_modes else "q_lightweight"
         
         task = predict_task.apply_async(
-            args=[request.image, request.mode, request.debug, request.is_preprocessed, request.calibrate, request.crop_bbox, request.mouth_open_ratio, request.is_infant],
+            args=[request.image, request.mode, request.debug, request.is_preprocessed, request.calibrate, request.crop_bbox, request.mouth_open_ratio, request.patient_history],
             queue=queue
         )
         logger.info(f"Task enqueued to {queue}: {task.id} (Mode: {request.mode})")

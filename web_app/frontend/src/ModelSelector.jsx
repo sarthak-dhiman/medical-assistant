@@ -1,4 +1,4 @@
-import { User, Eye, Stethoscope, ChevronRight } from 'lucide-react'
+import { Baby, Eye, ScanLine, Hand, Microscope, Smile, ChevronRight } from 'lucide-react'
 
 const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
     const modes = [
@@ -6,7 +6,7 @@ const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
             id: 'JAUNDICE_BODY',
             label: 'Jaundice Baby',
             shortLabel: 'Baby',
-            icon: <User className="w-4 h-4" />,
+            icon: <Baby className="w-4 h-4" />,
             color: 'from-yellow-400 to-orange-500',
             textColor: 'text-yellow-400',
             bgColor: 'bg-yellow-500/10',
@@ -26,7 +26,7 @@ const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
             id: 'SKIN_DISEASE',
             label: 'Skin Disease',
             shortLabel: 'Skin',
-            icon: <Stethoscope className="w-4 h-4" />,
+            icon: <ScanLine className="w-4 h-4" />,
             color: 'from-pink-400 to-rose-600',
             textColor: 'text-rose-400',
             bgColor: 'bg-rose-500/10',
@@ -36,7 +36,7 @@ const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
             id: 'NAIL_DISEASE',
             label: 'Nail Disease',
             shortLabel: 'Nail',
-            icon: <Stethoscope className="w-4 h-4" />,
+            icon: <Hand className="w-4 h-4" />,
             color: 'from-indigo-400 to-blue-600',
             textColor: 'text-indigo-400',
             bgColor: 'bg-indigo-500/10',
@@ -47,7 +47,7 @@ const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
             id: 'ORAL_CANCER',
             label: 'Oral Cancer',
             shortLabel: 'Oral',
-            icon: <Stethoscope className="w-4 h-4" />,
+            icon: <Microscope className="w-4 h-4" />,
             color: 'from-emerald-400 to-teal-600',
             textColor: 'text-emerald-400',
             bgColor: 'bg-emerald-500/10',
@@ -57,7 +57,7 @@ const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
             id: 'TEETH',
             label: 'Teeth Disease',
             shortLabel: 'Teeth',
-            icon: <Stethoscope className="w-4 h-4" />,
+            icon: <Smile className="w-4 h-4" />,
             color: 'from-slate-300 to-gray-500',
             textColor: 'text-slate-300',
             bgColor: 'bg-slate-500/10',

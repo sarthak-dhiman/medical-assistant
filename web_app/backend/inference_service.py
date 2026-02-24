@@ -46,6 +46,13 @@ from inference_new_models import (
     predict_posture_from_landmarks
 )
 
+# Import LLM Service
+try:
+    from llm_service import llm_service
+except ImportError:
+    llm_service = None
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,7 +149,7 @@ class InferenceService:
             return "Error", 0.0, {"error": str(e)}
     
     @staticmethod
-    def get_recommendations(label: str, mode: str = None):
+    def get_recommendations(label: str, mode: str = None, patient_history: str = None):
         """
         Fetch recommendations and explanations from the knowledge base.
         """
@@ -191,13 +198,23 @@ class InferenceService:
                  clean_label = label.replace(" ", "_")
                  kb_key = label_mapping.get(clean_label) or clean_label
         
+        # 1. Attempt Dynamic LLM Explanation
+        if llm_service and llm_service.is_ready:
+            try:
+                llm_explanation = llm_service.generate_explanation(label, mode, patient_history)
+                if llm_explanation:
+                    return llm_explanation
+            except Exception as e:
+                logger.error(f"LLM explanation failed, falling back to static KB: {e}")
+
+        # 2. Fallback to Static Knowledge Base
         try:
             if kb_path.exists():
                 with open(kb_path, 'r') as f:
                     kb = json.load(f)
                 return kb.get(kb_key)
         except Exception as e:
-            logger.error(f"Failed to load knowledge base: {e}")
+            logger.error(f"Failed to load static knowledge base: {e}")
             
         return None
 

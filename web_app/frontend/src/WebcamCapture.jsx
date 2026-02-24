@@ -5,7 +5,7 @@ import * as MPFaceMesh from '@mediapipe/face_mesh'
 const FaceMeshConstructor = MPFaceMesh.FaceMesh || window.FaceMesh || MPFaceMesh?.default?.FaceMesh;
 import axios from 'axios'
 import ResultDisplay from './ResultDisplay'
-import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon, Sun } from 'lucide-react'
+import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon, Sun, ClipboardList } from 'lucide-react'
 
 const API_URL = `http://${window.location.hostname}:8000`
 
@@ -20,7 +20,8 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const [isGPUFull, setIsGPUFull] = useState(false)
     const [showRecs, setShowRecs] = useState(false)
     const [isFaceMeshReady, setIsFaceMeshReady] = useState(false)
-    const [isInfant, setIsInfant] = useState(false)
+    const [patientHistory, setPatientHistory] = useState("")
+    const [showHistoryModal, setShowHistoryModal] = useState(false)
 
     // Refs for MediaPipe
     const faceMeshRef = useRef(null)
@@ -275,9 +276,10 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 is_upload: !!uploadedImage, // True when using uploaded image (enables foot/nail fallback)
                 is_preprocessed: isPreprocessed, // Signal backend to skip landmarks
                 calibrate: isCalibrateEnabled,
-                is_infant: isInfant, // Demographic routing for Adult Jaundice -> Skin Disease
                 crop_bbox: localCropBbox, // Normalized crop coords for nerd mode bbox (Edge AI path)
-                mouth_open_ratio: localMouthOpenRatio // Mouth open ratio for TEETH mode gate (Edge AI path)
+                mouth_open_ratio: localMouthOpenRatio, // Mouth open ratio for TEETH mode gate (Edge AI path)
+                patient_history: patientHistory // Pass optional patient history for LLM Fusion
+
             }, {
                 signal: controller.signal,
                 headers: {
@@ -474,13 +476,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         setShowRecs(false);
         setIsCalibrateEnabled(false);
         lastRequestRef.current = { image: null, mode: null };
-
-        // Default to Infant=true for Jaundice modes
-        if (mode === "JAUNDICE_BODY" || mode === "JAUNDICE_EYE") {
-            setIsInfant(true);
-        } else {
-            setIsInfant(false);
-        }
     }, [mode])
 
     // Status Helper
@@ -496,9 +491,9 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const getInstructions = () => {
         switch (mode) {
             case "JAUNDICE_EYE":
-                return isInfant ? "Come closer. Best for babies." : "Routing to Adult Skin Model.";
+                return "Ensure good lighting. Show face or skin clearly.";
             case "JAUNDICE_BODY":
-                return isInfant ? "Ensure good lighting. Show face or skin clearly. Best for babies." : "Routing to Adult Skin Model.";
+                return "Target chest or abdominal skin";
             case "SKIN_DISEASE":
                 return "Focus camera on affected area. Keep steady.";
             case "NAIL_DISEASE":
@@ -642,17 +637,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                             <Sun size={18} className={isCalibrateEnabled ? 'animate-pulse' : ''} />
                         </button>
 
-                        {/* Demographic Toggle (Only visible for Jaundice Modes) */}
-                        {(mode === "JAUNDICE_BODY" || mode === "JAUNDICE_EYE") && (
-                            <button
-                                onClick={() => setIsInfant(!isInfant)}
-                                className={`p-2 rounded-xl transition-all duration-300 font-bold text-[10px] uppercase tracking-wider flex items-center justify-center min-w-[60px] ${isInfant ? 'bg-pink-500/20 text-pink-400 border border-pink-500/50' : 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50'}`}
-                                title={isInfant ? "Neonatal Mode (Babies)" : "Adult Mode"}
-                            >
-                                {isInfant ? "👶 Infant" : "👤 Adult"}
-                            </button>
-                        )}
-
                         <button
                             onClick={() => setIsNerdMode(!isNerdMode)}
                             className={`p-2 rounded-xl transition-all duration-300 ${isNerdMode ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
@@ -660,6 +644,15 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         >
                             <Bug size={18} className={isNerdMode ? 'animate-pulse' : ''} />
                         </button>
+
+                        <button
+                            onClick={() => setShowHistoryModal(true)}
+                            className={`p-2 rounded-xl transition-all duration-300 ${patientHistory ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
+                            title="Patient History"
+                        >
+                            <ClipboardList size={18} className={patientHistory ? 'animate-pulse' : ''} />
+                        </button>
+
 
                         {setShowHelp && (
                             <button
@@ -718,79 +711,139 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             </div>
 
             {/* Recommendations Modal */}
-            {showRecs && result?.recommendations && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
-                    <div className="bg-gray-900 border border-white/10 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
-                        {/* Modal Header */}
-                        <div className="p-5 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent shrink-0">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2.5 bg-blue-600/20 rounded-xl text-blue-400">
-                                    <Info className="w-5 h-5" />
+            {
+                showRecs && result?.recommendations && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
+                        <div className="bg-gray-900 border border-white/10 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
+                            {/* Modal Header */}
+                            <div className="p-5 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-blue-600/20 rounded-xl text-blue-400">
+                                        <Info className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-black text-white tracking-tight">Condition Details</h2>
+                                        <p className="text-blue-400 font-bold text-[10px] uppercase tracking-widest">{result.label}</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h2 className="text-xl font-black text-white tracking-tight">Condition Details</h2>
-                                    <p className="text-blue-400 font-bold text-[10px] uppercase tracking-widest">{result.label}</p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => setShowRecs(false)}
-                                className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all"
-                            >
-                                <CloseIcon className="w-5 h-5" />
-                            </button>
-                        </div>
-
-                        {/* Modal Body */}
-                        <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                            {/* Description */}
-                            <section>
-                                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-2">
-                                    <div className="w-1 h-2.5 bg-blue-500 rounded-full" /> Overview
-                                </h3>
-                                <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.description}</p>
-                            </section>
-
-                            {/* Causes */}
-                            {result.recommendations.causes && (
-                                <section className="bg-white/5 rounded-xl p-3 border border-white/5">
-                                    <h3 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1.5">Common Causes</h3>
-                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.causes}</p>
-                                </section>
-                            )}
-
-                            {/* Care & Recommendations */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <section className="bg-green-500/5 rounded-xl p-3 border border-green-500/10">
-                                    <h3 className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-1.5">Care Tips</h3>
-                                    <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.care}</p>
-                                </section>
-                                <section className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/10">
-                                    <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-1.5">AI Guidance</h3>
-                                    <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.recommendations}</p>
-                                </section>
+                                <button
+                                    onClick={() => setShowRecs(false)}
+                                    className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all"
+                                >
+                                    <CloseIcon className="w-5 h-5" />
+                                </button>
                             </div>
 
-                            {/* Disclaimer */}
-                            <p className="text-[9px] text-gray-500 italic text-center pt-3 border-t border-white/5">
-                                This information is for educational purposes only and not a substitute for professional medical advice.
-                            </p>
-                        </div>
+                            {/* Modal Body */}
+                            <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                                {/* Description */}
+                                <section>
+                                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-2">
+                                        <div className="w-1 h-2.5 bg-blue-500 rounded-full" /> Overview
+                                    </h3>
+                                    <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.description}</p>
+                                </section>
 
-                        {/* Close Button */}
-                        <div className="p-4 bg-gray-950/50 border-t border-white/10 shrink-0">
-                            <button
-                                onClick={() => setShowRecs(false)}
-                                className="w-full py-3 bg-white text-black font-black rounded-xl hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-widest text-[11px]"
-                            >
-                                Close Details
-                            </button>
+                                {/* Causes */}
+                                {result.recommendations.causes && (
+                                    <section className="bg-white/5 rounded-xl p-3 border border-white/5">
+                                        <h3 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1.5">Common Causes</h3>
+                                        <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.causes}</p>
+                                    </section>
+                                )}
+
+                                {/* Care & Recommendations */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <section className="bg-green-500/5 rounded-xl p-3 border border-green-500/10">
+                                        <h3 className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-1.5">Care Tips</h3>
+                                        <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.care}</p>
+                                    </section>
+                                    <section className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/10">
+                                        <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-1.5">AI Guidance</h3>
+                                        <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.recommendations}</p>
+                                    </section>
+                                </div>
+
+                                {/* Disclaimer */}
+                                <p className="text-[9px] text-gray-500 italic text-center pt-3 border-t border-white/5">
+                                    This information is for educational purposes only and not a substitute for professional medical advice.
+                                </p>
+                            </div>
+
+                            {/* Close Button */}
+                            <div className="p-4 bg-gray-950/50 border-t border-white/10 shrink-0">
+                                <button
+                                    onClick={() => setShowRecs(false)}
+                                    className="w-full py-3 bg-white text-black font-black rounded-xl hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-widest text-[11px]"
+                                >
+                                    Close Details
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
+
+            {/* Patient History Modal */}
+            {
+                showHistoryModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
+                        <div className="bg-gray-900 border border-white/10 rounded-3xl w-full max-w-md shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col animate-in zoom-in-95 duration-300">
+                            <div className="p-5 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-blue-600/20 rounded-xl text-blue-400">
+                                        <ClipboardList className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-black text-white tracking-tight">Patient History</h2>
+                                        <p className="text-blue-400 font-bold text-[10px] uppercase tracking-widest">Optional Context</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowHistoryModal(false)}
+                                    className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all"
+                                >
+                                    <CloseIcon className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <div className="p-5">
+                                <p className="text-sm text-gray-400 mb-4 leading-relaxed">
+                                    Add brief notes about symptoms, duration, or relevant medical history. The AI will fuse this with the visual analysis to provide better context.
+                                </p>
+                                <textarea
+                                    value={patientHistory}
+                                    onChange={(e) => setPatientHistory(e.target.value)}
+                                    placeholder="e.g., The rash started 3 days ago. It's itchy and spreading to the arms. No fever..."
+                                    className="w-full h-32 bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 resize-none transition-all placeholder-gray-600"
+                                />
+                            </div>
+
+                            <div className="p-4 bg-gray-950/50 border-t border-white/10 shrink-0 grid grid-cols-2 gap-3">
+                                <button
+                                    onClick={() => {
+                                        setPatientHistory('');
+                                        setShowHistoryModal(false);
+                                    }}
+                                    className="w-full py-3 bg-white/5 text-gray-300 font-bold rounded-xl hover:bg-white/10 transition-all active:scale-[0.98] uppercase tracking-widest text-[11px]"
+                                >
+                                    Clear
+                                </button>
+                                <button
+                                    onClick={() => setShowHistoryModal(false)}
+                                    className="w-full py-3 bg-blue-600 text-white font-black rounded-xl hover:bg-blue-500 transition-all active:scale-[0.98] uppercase tracking-widest text-[11px]"
+                                >
+                                    Save & Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
             {/* Hidden canvas for Edge AI cropping */}
             <canvas ref={canvasRef} style={{ display: 'none' }} />
-        </div>
+        </div >
     )
 }
 
