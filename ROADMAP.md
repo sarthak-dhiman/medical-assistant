@@ -21,10 +21,10 @@
 - [x] LLM Medical Explanation Layer: Heavily constrained medical LLM for plain text explanations.
 
 ## Phase 4: Advanced AI Capabilities
-- [ ] Multi-Modal AI Fusion: Add patient history questionnaire.
-- [ ] Dataset Bias Auditing: Skin tone fairness analysis.
-- [ ] Model Uncertainty Estimation: Monte Carlo dropout and ensembles.
-- [ ] Active Learning Loop: Route uncertain samples for human review.
+- [x] Multi-Modal AI Fusion: Add patient history questionnaire.
+- [x] Dataset Bias Auditing: Skin tone fairness analysis.
+- [x] Model Uncertainty Estimation: Monte Carlo dropout and ensembles.
+- [x] Active Learning Loop: Route uncertain samples for human review.
 
 ## Phase 5: Synthetic Logic Pipeline for Postural Conditions (Explainable, No-Training Approach)
 

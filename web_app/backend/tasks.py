@@ -10,6 +10,8 @@ from .config import settings
 import mediapipe as mp
 
 import datetime
+import uuid
+import json
 try:
     from mmpose.apis import MMPoseInferencer
 except ImportError:
@@ -49,7 +51,26 @@ ITA_DISTRIBUTION = Counter(
 
 # Lazy Global Models (Segmentation only - inference delegated to service)
 seg_model = None
-init_errors = [] # Persistent global errors
+init_errors = []  # Persistent global errors
+
+import threading as _threading
+_seg_model_lock = _threading.Lock()
+
+def _ensure_seg_model():
+    """Thread-safe lazy loader for SegFormer. Safe for --pool=threads."""
+    global seg_model
+    if seg_model is not None:
+        return seg_model
+    with _seg_model_lock:
+        if seg_model is None:  # double-checked within lock
+            try:
+                from segformer_utils import SegFormerWrapper
+                logger.info("Lazy-loading SegFormer (first request)...")
+                seg_model = SegFormerWrapper()
+                logger.info("✅ SegFormer loaded (lazy).")
+            except Exception as e:
+                logger.error(f"❌ SegFormer lazy load failed: {e}")
+    return seg_model
 
 def encode_mask_b64(mask):
     """Encodes a single-channel mask (uint8) to base64 PNG."""
@@ -104,7 +125,7 @@ def _anonymize_face(image):
         if results.detections:
             for det in results.detections:
                 bboxC = det.location_data.relative_bounding_box
-                x, y, bw, bh = int(bboxC.left * w), int(bboxC.top * h), int(bboxC.width * w), int(bboxC.height * h)
+                x, y, bw, bh = int(bboxC.xmin * w), int(bboxC.ymin * h), int(bboxC.width * w), int(bboxC.height * h)
                 
                 # Expand box slightly (20%)
                 x1 = max(0, x - int(bw * 0.1)); y1 = max(0, y - int(bh * 0.1))
@@ -136,6 +157,24 @@ def get_hand_detector():
             logger.error(f"Failed to init MediaPipe Hands: {e}")
             return None
     return hands_detector
+
+mp_pose = None
+pose_ext_detector = None
+
+def get_pose_detector():
+    global mp_pose, pose_ext_detector
+    if pose_ext_detector is None:
+        try:
+            mp_pose = mp.solutions.pose
+            pose_ext_detector = mp_pose.Pose(
+                static_image_mode=True,
+                model_complexity=1,
+                min_detection_confidence=0.5
+            )
+        except Exception as e:
+            logger.error(f"Failed to init MediaPipe Pose: {e}")
+            return None
+    return pose_ext_detector
 
 def detect_hand_and_crop(image):
     """
@@ -303,31 +342,53 @@ def warmup_light_models():
         except Exception as e:
             loaded.append(f"{name}(ERR:{e})")
             logger.error(f"Warmup {name} failed: {e}")
+            
+    # Warm up MediaPipe Pose
+    try:
+        detector = get_pose_detector()
+        loaded.append("mediapipe_pose" if detector else "mediapipe_pose(FAIL)")
+    except Exception as e:
+        loaded.append(f"mediapipe_pose(ERR:{e})")
+        logger.error(f"Warmup MediaPipe Pose failed: {e}")
+        
     logger.info(f"Light model warmup complete: {loaded}")
 
-from celery.signals import worker_process_init
+from celery.signals import worker_process_init, worker_ready
 
 @worker_process_init.connect
-def init_models(**kwargs):
+def init_models_prefork(**kwargs):
     """
-    EAGER LOADING:
-    Load SegFormer only on heavy workers (q_heavy_cv) that need it for segmentation.
-    Light workers (q_lightweight) skip SegFormer to save ~325MB RAM per process.
-    ONNX classifiers load lazily on first request in all workers.
+    PREFORK POOL: fires once per forked subprocess.
+    Loads SegFormer + classifiers in heavy subprocesses.
     """
-    # Check which queues this worker is consuming
-    queues = os.environ.get('CELERY_QUEUES', '')
-    # worker-heavy command includes '-Q q_heavy_cv,celery', worker-light uses '-Q q_lightweight'
-    is_heavy = 'q_heavy_cv' in queues or 'celery' in queues
-    
-    # Also detect from the celery worker command line args
+    _do_init_models()
+
+@worker_ready.connect
+def init_models_threads(**kwargs):
+    """
+    THREAD POOL: fires once when the worker is fully ready.
+    `worker_process_init` does NOT fire in --pool=threads mode,
+    so we also hook `worker_ready` to ensure models load regardless of pool type.
+    """
+    _do_init_models()
+
+def _do_init_models():
+    """
+    Shared model-init logic for both prefork and thread pools.
+    Detects heavy vs light worker from command-line queue args.
+    """
+    global seg_model
+    # Idempotency guard — don't double-load if both signals fire (shouldn't happen)
+    if seg_model is not None:
+        return
+
     import sys as _sys
     cmd_line = ' '.join(_sys.argv)
-    if 'q_heavy_cv' in cmd_line:
-        is_heavy = True
-    elif 'q_lightweight' in cmd_line and 'q_heavy_cv' not in cmd_line:
+    queues = os.environ.get('CELERY_QUEUES', '')
+    is_heavy = ('q_heavy_cv' in cmd_line) or ('q_heavy_cv' in queues)
+    if 'q_lightweight' in cmd_line and 'q_heavy_cv' not in cmd_line:
         is_heavy = False
-    
+
     if is_heavy:
         logger.info("🚀 HEAVY WORKER INIT: Loading SegFormer + classifiers...")
         errors = load_models()
@@ -339,6 +400,7 @@ def init_models(**kwargs):
     else:
         logger.info("🚀 LIGHT WORKER INIT: Loading classifiers (no SegFormer)...")
         warmup_light_models()
+
 
 @celery_app.task(bind=True, queue='q_lightweight')
 def check_model_health(self):
@@ -362,12 +424,12 @@ def check_model_health(self):
     return status
 
 @celery_app.task(bind=True, name='web_app.backend.tasks.predict_task', max_retries=3)
-def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, crop_bbox=None, mouth_open_ratio=None, patient_history=None):
+def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, is_upload=False, crop_bbox=None, mouth_open_ratio=None, patient_history=None):
     """
     Celery task wrapper that injects Clinical Triage validation into the core sequence.
     """
     # 1. Execute the core heavy lifting
-    result = _core_predict_task(self, image_data_b64, mode, debug, is_preprocessed, calibrate, crop_bbox, mouth_open_ratio, patient_history)
+    result = _core_predict_task(self, image_data_b64, mode, debug, is_preprocessed, calibrate, is_upload, crop_bbox, mouth_open_ratio, patient_history)
     
     logger.info(f"Wrapper received result type {type(result)} with status {result.get('status') if isinstance(result, dict) else 'none'}")
 
@@ -397,16 +459,65 @@ def predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False,
             if "recommendations" not in result and label:
                 recs = inference_service.get_recommendations(label, mode=mode, patient_history=patient_history)
                 if recs: result["recommendations"] = recs
+    # 3. Active Learning Loop (Edge-Case Routing)
+    _route_active_learning(image_data_b64, mode, result)
         
     return result
 
-def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, crop_bbox=None, mouth_open_ratio=None, patient_history=None):
+def _route_active_learning(image_data_b64, mode, result):
+    """Saves low confidence or highly uncertain images for human review and further training."""
+    try:
+        if not isinstance(result, dict) or result.get("status") != "success": 
+            return
+            
+        conf = float(result.get("confidence", 1.0))
+        debug_info = result.get("debug_info", {})
+        uncert = float(debug_info.get("uncertainty_score", 0.0))
+        
+        # Criteria for Active Learning Edge Cases Configurable
+        # e.g., low confidence (<0.40) or high epistemic uncertainty (>0.015 variance)
+        if conf < 0.40 or uncert > 0.015:
+            save_dir = Path("/app/human_review_queue")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Decode the original image for saving
+            header, image_b64 = image_data_b64.split(",", 1) if "," in image_data_b64 else ("", image_data_b64)
+            image_bytes = base64.b64decode(image_b64)
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            # Privacy Enforce: Anonymize non-facial modes unconditionally
+            if mode in ["SKIN_DISEASE", "BURNS", "NAIL_DISEASE", "POSTURE"]:
+                frame = _anonymize_face(frame)
+                
+            file_id = str(uuid.uuid4())[:8]
+            img_path = str(save_dir / f"{mode}_{file_id}.jpg")
+            meta_path = str(save_dir / f"{mode}_{file_id}.json")
+            
+            cv2.imwrite(img_path, frame)
+            
+            meta = {
+                "mode": mode,
+                "label": result.get("label"),
+                "confidence": conf,
+                "uncertainty_score": uncert,
+                "triage_level": result.get("triage", {}).get("level"),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+                
+            logger.info(f"[ACTIVE LEARNING] Saved edge-case {mode}_{file_id} (Conf: {conf:.2f}, Var: {uncert:.4f})")
+    except Exception as e:
+        logger.error(f"Failed to route active learning: {e}")
+
+def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=False, calibrate=False, is_upload=False, crop_bbox=None, mouth_open_ratio=None, patient_history=None):
     try:
         # Validate inputs
         if not image_data_b64 or not isinstance(image_data_b64, str):
             return {"status": "error", "error": "Invalid or missing image data"}
         
-        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE", "CATARACT", "ORAL_CANCER", "TEETH", "POSTURE"]:
+        if not mode or mode not in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE", "CATARACT", "ORAL_CANCER", "TEETH", "POSTURE", "POSTURE_DEFORMITY"]:
             return {"status": "error", "error": f"Invalid mode: {mode}"}
         
         # Decode Image with comprehensive error handling
@@ -456,7 +567,7 @@ def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=
         # Other models are loaded by inference_service on demand
         # Skip check when client already pre-cropped the ROI (Edge AI path)
         if mode in ["JAUNDICE_EYE", "JAUNDICE_BODY", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
-            if not is_preprocessed and (not seg_model or not seg_model.is_ready):
+            if not is_preprocessed and not _ensure_seg_model():
                 return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
         
         # Process based on mode
@@ -539,6 +650,8 @@ def _core_predict_task(self, image_data_b64, mode, debug=False, is_preprocessed=
             return _process_cataract(frame, debug, calibrate=calibrate)
         elif mode == "POSTURE":
             return _process_posture(frame, w, h, debug, result)
+        elif mode == "POSTURE_DEFORMITY":
+            return _process_posture_deformity(frame, w, h, debug, result)
         elif mode in ["JAUNDICE_BODY", "JAUNDICE_EYE", "SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
             # Apply Anonymization for potentially sensitive non-facial scans
             if mode in ["SKIN_DISEASE", "BURNS", "NAIL_DISEASE"]:
@@ -573,12 +686,14 @@ def _process_segmentation_mode(frame, mode, debug, calibrate=False):
             INFERENCE_WIDTH = 480
             scale = INFERENCE_WIDTH / w
             # Get mask from SegFormer
-            if not seg_model: return {"status": "error", "error": "SegModel not loaded"}
-            mask = seg_model.predict(frame)
+            # Ensure SegFormer is loaded (works with both prefork and threads pool)
+            current_seg = _ensure_seg_model()
+            if not current_seg: return {"status": "error", "error": "SegFormer Not Ready (Check Logs)"}
+            mask = current_seg.predict(frame)
             
             # Additional skin-color-based mask for robustness
-            skin_mask_color = seg_model.get_skin_mask_color(frame)
-            skin_mask_seg = seg_model.get_skin_mask(mask)
+            skin_mask_color = current_seg.get_skin_mask_color(frame)
+            skin_mask_seg = current_seg.get_skin_mask(mask)
             skin_mask = cv2.bitwise_or(skin_mask_color, skin_mask_seg)
             
             # --- Dataset Bias Auditing ---
@@ -611,7 +726,8 @@ def _process_jaundice_body(frame, skin_mask, w, h, debug, result, calibrate=Fals
     try:
         # 1. Get Person Mask (MediaPipe)
         try:
-            person_mask = seg_model.get_body_segmentation(frame)
+            _sm = _ensure_seg_model()
+            person_mask = _sm.get_body_segmentation(frame) if _sm else np.ones(frame.shape[:2], dtype=np.uint8) * 255
         except Exception:
             person_mask = np.ones(frame.shape[:2], dtype=np.uint8) * 255
             
@@ -669,16 +785,18 @@ def _process_jaundice_eye(frame, skin_mask, w, h, debug, result, calibrate=False
 
         # 2. Extract Eyes (Priority: MediaPipe -> Fallback: SegFormer)
         used_mediapipe = True
-        eyes = seg_model.get_eyes_mediapipe(frame)
+        _sm = _ensure_seg_model()
+        eyes = _sm.get_eyes_mediapipe(frame) if _sm else []
         
         if not eyes:
             used_mediapipe = False
             # Run SegFormer to get the raw class mask for eye ROI extraction
-            seg_mask = seg_model.predict(frame)
-            raw_eyes = seg_model.get_eye_rois(seg_mask, frame)
-            for cropped_eye, name, bbox in raw_eyes:
-                masked, _ = seg_model.apply_iris_mask(cropped_eye)
-                eyes.append((masked, name, bbox))
+            if _sm:
+                seg_mask = _sm.predict(frame)
+                raw_eyes = _sm.get_eye_rois(seg_mask, frame)
+                for cropped_eye, name, bbox in raw_eyes:
+                    masked, _ = _sm.apply_iris_mask(cropped_eye)
+                    eyes.append((masked, name, bbox))
 
         found_eyes = []
         any_jaundice = False
@@ -900,6 +1018,108 @@ def _process_cataract(frame, debug, calibrate=False):
     except Exception as e:
         logger.error(f"Cataract processing error: {e}")
         return {"status": "error", "error": f"Cataract detection failed: {str(e)}"}
+
+def _process_posture(frame, w, h, debug, result):
+    """Process posture detection using MediaPipe Pose."""
+    try:
+        detector = get_pose_detector()
+        if not detector:
+            return {"status": "error", "error": "Pose detector not initialized."}
+            
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pose_results = detector.process(img_rgb)
+        
+        if not pose_results.pose_landmarks:
+            result.update({
+                "label": "No Person Detected",
+                "confidence": 0.0,
+                "debug_info": {"error": "Make sure your full upper body is visible."}
+            })
+            return result
+            
+        # Extract landmarks for inference (list of x, y, z floats)
+        landmarks = []
+        frontend_landmarks = []
+        for lm in pose_results.pose_landmarks.landmark:
+            landmarks.extend([lm.x, lm.y])
+            frontend_landmarks.append({"x": lm.x, "y": lm.y, "visibility": lm.visibility})
+            
+        label, conf, debug_info = inference_service.predict_posture(landmarks, debug=debug)
+        
+        debug_info["landmarks"] = frontend_landmarks
+        
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info
+        })
+        
+        return result
+    except Exception as e:
+        logger.error(f"Posture processing error: {e}")
+        return {"status": "error", "error": f"Posture detection failed: {str(e)}"}
+
+
+def _process_posture_deformity(frame, w, h, debug, result):
+    """Process spinal/structural postural deformity using MediaPipe Pose + rule engine."""
+    try:
+        from posture_rules import classify_posture_deformity
+        
+        detector = get_pose_detector()
+        if not detector:
+            return {"status": "error", "error": "Pose detector not initialized."}
+            
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pose_results = detector.process(img_rgb)
+        
+        if not pose_results.pose_landmarks:
+            result.update({
+                "label": "No Person Detected",
+                "confidence": 0.0,
+                "debug_info": {"error": "Stand facing the camera with your full body visible."}
+            })
+            return result
+            
+        # Build landmark list for posture_rules engine
+        frontend_landmarks = []
+        for lm in pose_results.pose_landmarks.landmark:
+            frontend_landmarks.append({
+                "x": float(lm.x),
+                "y": float(lm.y),
+                "z": float(getattr(lm, "z", 0.0)),
+                "visibility": float(getattr(lm, "visibility", 1.0))
+            })
+        
+        # Run the geometry-based deformity classifier
+        analysis = classify_posture_deformity(frontend_landmarks, debug=debug)
+        
+        # Top-level label for triage engine
+        label = analysis["summary_label"]
+        # Confidence proxy: Normal → 0.95, Mild → 0.75, Moderate → 0.85, Severe → 0.92
+        severity_conf = {"Normal": 0.95, "Mild": 0.78, "Moderate": 0.87, "Severe": 0.93, "Unknown": 0.50}
+        conf = severity_conf.get(analysis["worst_severity"], 0.75)
+        
+        debug_info = {
+            "landmarks": frontend_landmarks,
+            "analysis": analysis,
+        }
+        if debug:
+            debug_info["raw_conditions"] = analysis.get("conditions", [])
+        
+        result.update({
+            "label": label,
+            "confidence": float(conf),
+            "debug_info": debug_info,
+            "conditions": analysis.get("conditions", []),
+            "overall": analysis["overall"],
+            "abnormal_count": analysis["abnormal_count"],
+        })
+        
+        return result
+    except Exception as e:
+        logger.error(f"Posture deformity processing error: {e}")
+        import traceback; traceback.print_exc()
+        return {"status": "error", "error": f"Posture deformity detection failed: {str(e)}"}
 
 
 # --- Diagnostic Gateway ---

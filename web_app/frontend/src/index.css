@@ -1,36 +1,159 @@
 @import "tailwindcss";
 
+/* ══════════════════════════════════════════════════
+   PULSE · Medical AI — Premium Design System
+   ══════════════════════════════════════════════════ */
+
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* ─ Backgrounds */
+  --bg-base:    #030812;
+  --bg-surface: #080f22;
+  --bg-raised:  #0d1530;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* ─ Text */
+  --text-1: #e8edff;
+  --text-2: #8892b0;
+  --text-3: #404b66;
 
+  /* ─ Borders */
+  --border:    rgba(255,255,255,0.07);
+  --border-md: rgba(255,255,255,0.13);
+
+  /* ─ Accents */
+  --cyan:   #22d3ee;
+  --indigo: #818cf8;
+  --violet: #a78bfa;
+  --green:  #34d399;
+  --amber:  #fbbf24;
+  --rose:   #fb7185;
+  --orange: #fb923c;
+
+  /* ─ Layout */
+  --nav-h: 52px;
+
+  /* ─ Fonts */
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  font-family: 'Inter', system-ui, -apple-system, Helvetica, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
 }
 
-body {
+/* ── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
   margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-1);
+}
+
+/* Ambient depth */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 50% at -5% -5%,  rgba(34,211,238,0.045) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 105% 105%, rgba(129,140,248,0.055) 0%, transparent 55%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#root { position: relative; z-index: 1; }
+
+/* ── Glass panels ────────────────────────────────────────── */
+.glass {
+  background: rgba(8,15,34,0.82);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.glass-light {
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.glass-over {
+  background: rgba(3,8,18,0.62);
+  backdrop-filter: blur(32px) saturate(1.8);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+}
+
+/* ── Typography helpers ──────────────────────────────────── */
+.mono  { font-family: var(--font-mono); }
+.label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* ── Scroll ──────────────────────────────────────────────── */
+.no-scrollbar                { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ── Layout shell ─────────────────────────────────────────── */
+.app-nav {
+  height: var(--nav-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(3,8,18,0.94);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.app-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes scan-line {
+  0%   { top: -2px; opacity: 0; }
+  5%   { opacity: 0.55; }
+  95%  { opacity: 0.55; }
+  100% { top: 100%;  opacity: 0; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 1;   }
 }
 
 @keyframes loading {
-  0% {
-    transform: scaleX(0);
-  }
-
-  50% {
-    transform: scaleX(0.7);
-  }
-
-  100% {
-    transform: scaleX(1);
-  }
+  0%   { transform: scaleX(0); }
+  50%  { transform: scaleX(0.7); }
+  100% { transform: scaleX(1); }
 }
+
+.animate-scan-line { animation: scan-line 2.8s ease-in-out infinite; }
+.animate-spin-slow { animation: spin-slow 8s linear infinite; }
+.animate-fade-up   { animation: fade-up 0.3s ease-out both; }
+.animate-glow      { animation: glow-pulse 2s ease-in-out infinite; }

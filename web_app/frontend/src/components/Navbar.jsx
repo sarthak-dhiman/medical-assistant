@@ -1,69 +1,90 @@
-import { Link, useLocation } from 'react-router-dom'
-import { Activity, Scan, HelpCircle } from 'lucide-react'
+﻿import { Link, useLocation } from 'react-router-dom'
+import { Activity, Scan, Cpu, FlaskConical, Stethoscope, Bone } from 'lucide-react'
+import { useHealth } from '../context/HealthContext'
+
+const ROUTES = [
+    { path: '/', label: 'Manual', icon: Stethoscope, accent: '#22d3ee', bg: 'rgba(34,211,238,0.1)', border: 'rgba(34,211,238,0.3)', glow: 'rgba(34,211,238,0.2)' },
+    { path: '/auto', label: 'Auto-Pilot', icon: Scan, accent: '#818cf8', bg: 'rgba(129,140,248,0.1)', border: 'rgba(129,140,248,0.3)', glow: 'rgba(129,140,248,0.2)' },
+    { path: '/posture', label: 'Posture', icon: Activity, accent: '#34d399', bg: 'rgba(52,211,153,0.1)', border: 'rgba(52,211,153,0.3)', glow: 'rgba(52,211,153,0.2)' },
+    { path: '/deformity', label: 'Spine & Gait', icon: Bone, accent: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.3)', glow: 'rgba(167,139,250,0.2)' },
+]
 
 function Navbar() {
-    const location = useLocation();
-    const isAuto = location.pathname === '/auto';
+    const location = useLocation()
+    const { isNerdMode, setIsNerdMode, gpuMemory } = useHealth()
 
     return (
-        <nav className="border-b border-white/5 bg-gray-950/50 backdrop-blur-xl z-50 sticky top-0 w-full">
-            <div className="max-w-[1500px] mx-auto px-4 md:px-6 h-auto md:h-16 flex flex-col md:flex-row items-center justify-between py-2 md:py-0 gap-2 md:gap-0">
+        <nav className="app-nav px-4 md:px-6" style={{ gap: 12 }}>
 
-                {/* Logo */}
-                <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-900/40 border border-white/10">
-                            <Activity className="w-4 h-4 md:w-5 md:h-5 text-white" />
-                        </div>
-                        <span className="font-black text-lg md:text-xl bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-500 tracking-tighter">
-                            MEDICAL<span className="text-white opacity-20 italic">AI</span>
-                        </span>
+            {/* â”€â”€ Logo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <div className="flex items-center gap-2.5 shrink-0">
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-900/30"
+                    style={{ background: 'linear-gradient(135deg, #22d3ee 0%, #6366f1 100%)' }}>
+                    <Stethoscope className="w-3.5 h-3.5 text-white" />
+                </div>
+                <span className="hidden sm:block font-black text-[13px] tracking-tight" style={{ color: 'var(--text-1)' }}>
+                    MEDICAL<span style={{ color: 'var(--cyan)', opacity: 0.7, fontWeight: 300, fontStyle: 'italic' }}> AI</span>
+                </span>
+            </div>
+
+            {/* Divider */}
+            <div className="hidden md:block w-px h-4 shrink-0" style={{ background: 'var(--border-md)' }} />
+
+            {/* â”€â”€ Route tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                {ROUTES.map(({ path, label, icon: Icon, accent, bg, border, glow }) => {
+                    const active = location.pathname === path
+                    return (
+                        <Link
+                            key={path}
+                            to={path}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all duration-200 whitespace-nowrap"
+                            style={active ? {
+                                background: bg,
+                                border: `1px solid ${border}`,
+                                color: accent,
+                                boxShadow: `0 2px 16px ${glow}`,
+                            } : {
+                                border: '1px solid transparent',
+                                color: 'var(--text-3)',
+                            }}
+                        >
+                            <Icon className="w-3.5 h-3.5 shrink-0" />
+                            <span className="hidden sm:block">{label}</span>
+                        </Link>
+                    )
+                })}
+            </div>
+
+            {/* â”€â”€ Right: GPU + Expert â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+                {gpuMemory && (
+                    <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                        style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.2)' }}>
+                        <Cpu className="w-3 h-3 shrink-0" style={{ color: 'var(--green)' }} />
+                        <span className="mono text-[10px] font-bold" style={{ color: 'var(--green)' }}>{gpuMemory} MB</span>
                     </div>
-                </div>
+                )}
 
-                {/* Navigation Switch - Horizontal Scroll on Mobile */}
-                <div className="flex bg-white/5 rounded-xl p-1 border border-white/5 w-full md:w-auto overflow-x-auto scrollbar-hide">
-                    <Link
-                        to="/"
-                        className={`flex-1 md:flex-none whitespace-nowrap px-4 md:px-6 py-2 rounded-lg text-[10px] md:text-xs font-black uppercase tracking-widest transition-all flex items-center justification-center gap-2 ${location.pathname === '/'
-                            ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-900/20'
-                            : 'text-gray-500 hover:text-white hover:bg-white/5'
-                            }`}
-                    >
-                        <Activity className="w-3 h-3" />
-                        Manual
-                    </Link>
-                    <Link
-                        to="/auto"
-                        className={`flex-1 md:flex-none whitespace-nowrap px-4 md:px-6 py-2 rounded-lg text-[10px] md:text-xs font-black uppercase tracking-widest transition-all flex items-center justification-center gap-2 ${isAuto
-                            ? 'bg-purple-500 text-white shadow-lg shadow-purple-900/20'
-                            : 'text-gray-500 hover:text-white hover:bg-white/5'
-                            }`}
-                    >
-                        <Scan className="w-3 h-3" />
-                        Auto-Pilot
-                    </Link>
-                    <Link
-                        to="/posture"
-                        className={`flex-1 md:flex-none whitespace-nowrap px-4 md:px-6 py-2 rounded-lg text-[10px] md:text-xs font-black uppercase tracking-widest transition-all flex items-center justification-center gap-2 ${location.pathname === '/posture'
-                            ? 'bg-orange-500 text-white shadow-lg shadow-orange-900/20'
-                            : 'text-gray-500 hover:text-white hover:bg-white/5'
-                            }`}
-                    >
-                        <Activity className="w-3 h-3" />
-                        Posture
-                    </Link>
-                </div>
-
-                {/* Right Actions */}
-                <div className="hidden md:flex items-center gap-4">
-                    {/* Add additional items here if needed */}
-                </div>
-
+                <button
+                    onClick={() => setIsNerdMode(v => !v)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all duration-200"
+                    style={isNerdMode ? {
+                        background: 'rgba(167,139,250,0.12)',
+                        border: '1px solid rgba(167,139,250,0.35)',
+                        color: 'var(--violet)',
+                    } : {
+                        background: 'transparent',
+                        border: '1px solid rgba(255,255,255,0.09)',
+                        color: 'var(--text-3)',
+                    }}
+                >
+                    <FlaskConical className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden sm:block">Expert</span>
+                </button>
             </div>
         </nav>
     )
 }
-
 
 export default Navbar

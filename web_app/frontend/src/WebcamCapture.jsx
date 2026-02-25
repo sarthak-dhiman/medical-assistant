@@ -5,7 +5,7 @@ import * as MPFaceMesh from '@mediapipe/face_mesh'
 const FaceMeshConstructor = MPFaceMesh.FaceMesh || window.FaceMesh || MPFaceMesh?.default?.FaceMesh;
 import axios from 'axios'
 import ResultDisplay from './ResultDisplay'
-import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon, Sun, ClipboardList } from 'lucide-react'
+import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon, Sun, ClipboardList, Bot, Activity, Check, ShieldAlert } from 'lucide-react'
 
 const API_URL = `http://${window.location.hostname}:8000`
 
@@ -18,7 +18,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const [facingMode, setFacingMode] = useState("user")
     const [isCalibrateEnabled, setIsCalibrateEnabled] = useState(false)
     const [isGPUFull, setIsGPUFull] = useState(false)
-    const [showRecs, setShowRecs] = useState(false)
     const [isFaceMeshReady, setIsFaceMeshReady] = useState(false)
     const [patientHistory, setPatientHistory] = useState("")
     const [showHistoryModal, setShowHistoryModal] = useState(false)
@@ -473,7 +472,6 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         setIsGPUFull(false);
         isProcessingRef.current = false;
         setIsProcessing(false);
-        setShowRecs(false);
         setIsCalibrateEnabled(false);
         lastRequestRef.current = { image: null, mode: null };
     }, [mode])
@@ -584,205 +582,216 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 </div>
             )}
 
-            {/* Overlay UI */}
-            <div className="absolute inset-0 pointer-events-none">
-                {/* Result Overlay */}
-                <ResultDisplay result={result} mode={mode} isNerdMode={isNerdMode} />
+            {/* Main Application Layout (Video + LLM Panel) */}
+            <div className={`flex flex-col lg:flex-row h-full w-full `}>
 
-                {/* Unified Glass Header Bar (Opaque to hide masks behind UI) */}
-                <div className="absolute top-0 left-0 right-0 h-14 bg-gray-950 border-b border-white/10 flex items-center justify-between px-4 z-20 pointer-events-auto">
-
-                    {/* Left: Mode Title (Hierarchy Swapped) */}
-                    <div className="flex flex-col leading-none">
-                        <span className="text-sm font-black text-cyan-400 tracking-tight uppercase">Medical AI</span>
-                        <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest truncate max-w-[100px] sm:max-w-none mt-0.5">
-                            {mode.replace('_', ' ')}
-                        </span>
-                    </div>
-
-                    {/* Center: Live Status & Processing (Fixed Widths to prevent shift) */}
-                    <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-2xl border border-white/5 shrink-0">
-                        <div className={`flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl transition-all min-w-[70px] ${uploadedImage ? 'bg-blue-600/40 text-blue-200' : 'bg-green-600/40 text-green-200'
-                            }`}>
-                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${uploadedImage ? 'bg-blue-400' : 'bg-green-400 animate-pulse'}`} />
-                            <span className="text-[10px] font-bold uppercase tracking-tight">{uploadedImage ? 'Static' : 'Live'}</span>
-                        </div>
-
-                        <div className="flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-600/20 text-cyan-200 min-w-[75px]">
-                            <RefreshCw className={`w-3 h-3 shrink-0 ${isProcessing ? 'animate-spin' : ''} ${error ? 'text-red-400' : ''}`} />
-                            <span className={`text-[10px] font-bold uppercase tracking-tight ${error ? 'text-red-400' : ''}`}>
-                                {isProcessing ? 'Proc' : 'Ready'}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* Right: Tools Group */}
-                    <div className="flex items-center gap-1">
-                        {!uploadedImage && (
-                            <button
-                                onClick={toggleCamera}
-                                className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-95"
-                                title="Switch Camera"
-                            >
-                                <SwitchCamera className="w-5 h-5" />
-                            </button>
+                {/* ── LEFT: Video/Image Area ────────────────────────────────────── */}
+                <div className={`relative flex-1 min-h-0 bg-black ${result?.recommendations ? 'lg:border-r border-white/10' : ''}`}>
+                    {/* Overlay UI */}
+                    <div className="absolute inset-0 pointer-events-none">
+                        {/* Error Overlay */}
+                        {error && !isProcessing && (
+                            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-950/90 border-2 border-red-500/50 rounded-2xl p-6 text-center shadow-[0_0_50px_rgba(239,68,68,0.2)] z-50 animate-in fade-in zoom-in-95 backdrop-blur-md max-w-sm w-[90%] pointer-events-auto">
+                                <h3 className="text-red-400 font-black text-lg mb-2 flex items-center justify-center gap-2">
+                                    <Bug className="w-5 h-5" /> Analysis Failed
+                                </h3>
+                                <p className="text-white/80 text-sm font-medium leading-relaxed mb-5">{error}</p>
+                                <button
+                                    onClick={() => setError(null)}
+                                    className="px-6 py-2.5 bg-red-600/20 hover:bg-red-600/40 border border-red-500/30 text-red-200 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95"
+                                >
+                                    Dismiss
+                                </button>
+                            </div>
                         )}
 
-                        {/* Calibrate Lighting Toggle */}
-                        <button
-                            onClick={() => setIsCalibrateEnabled(!isCalibrateEnabled)}
-                            className={`p-2 rounded-xl transition-all duration-300 ${isCalibrateEnabled ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
-                            title="Calibrate Lighting (Color Constancy)"
-                        >
-                            <Sun size={18} className={isCalibrateEnabled ? 'animate-pulse' : ''} />
-                        </button>
+                        {/* Result Overlay */}
+                        <ResultDisplay result={result} mode={mode} isNerdMode={isNerdMode} />
 
-                        <button
-                            onClick={() => setIsNerdMode(!isNerdMode)}
-                            className={`p-2 rounded-xl transition-all duration-300 ${isNerdMode ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
-                            title="Nerd Mode (Debug)"
-                        >
-                            <Bug size={18} className={isNerdMode ? 'animate-pulse' : ''} />
-                        </button>
+                        {/* Unified Glass Header Bar (Opaque to hide masks behind UI) */}
+                        <div className="absolute top-0 left-0 right-0 h-14 bg-gray-950 border-b border-white/10 flex items-center justify-between px-4 z-20 pointer-events-auto">
 
-                        <button
-                            onClick={() => setShowHistoryModal(true)}
-                            className={`p-2 rounded-xl transition-all duration-300 ${patientHistory ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
-                            title="Patient History"
-                        >
-                            <ClipboardList size={18} className={patientHistory ? 'animate-pulse' : ''} />
-                        </button>
-
-
-                        {setShowHelp && (
-                            <button
-                                onClick={() => setShowHelp(true)}
-                                className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-95"
-                                title="Help"
-                            >
-                                <HelpCircle className="w-5 h-5" />
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {/* Instructions Removed (Moved to Sidebar) */}
-
-                {/* Mode Indicator & Instructions */}
-                <div className="absolute bottom-32 md:bottom-28 lg:bottom-6 left-4 right-4 lg:left-6 lg:right-auto transition-all duration-300 pointer-events-auto flex justify-center lg:block">
-                    {result && (
-                        <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
-                            <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-2">AI Diagnosis</p>
-                            <div className="flex items-center justify-between gap-4">
-                                <div className="flex flex-col">
-                                    <div className="flex items-center gap-2">
-                                        <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
-                                            ? 'text-red-400' : 'text-green-400'
-                                            }`}>
-                                            {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}
-                                        </p>
-                                        {result.triage && (
-                                            <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md border ${result.triage.color}`}>
-                                                {result.triage.level}
-                                            </span>
-                                        )}
-                                    </div>
-                                    {result.triage && (
-                                        <p className="text-xs text-gray-400 mt-1 italic leading-tight">
-                                            {result.triage.message}
-                                        </p>
-                                    )}
-                                </div>
-                                <span className="text-sm font-black text-white/40 shrink-0">
-                                    {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
+                            {/* Left: Mode Title (Hierarchy Swapped) */}
+                            <div className="flex flex-col leading-none">
+                                <span className="text-sm font-black text-cyan-400 tracking-tight uppercase">Medical AI</span>
+                                <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest truncate max-w-[100px] sm:max-w-none mt-0.5">
+                                    {mode.replace('_', ' ')}
                                 </span>
                             </div>
-                            {result.recommendations && (
-                                <button
-                                    onClick={() => setShowRecs(true)}
-                                    className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs font-bold text-cyan-400 hover:text-cyan-300 bg-cyan-400/10 hover:bg-cyan-400/20 py-2 px-3 rounded-lg transition-all"
-                                >
-                                    Learn More <ChevronRight className="w-4 h-4" />
-                                </button>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
 
-            {/* Recommendations Modal */}
-            {
-                showRecs && result?.recommendations && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
-                        <div className="bg-gray-900 border border-white/10 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
-                            {/* Modal Header */}
-                            <div className="p-5 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-600/10 to-transparent shrink-0">
-                                <div className="flex items-center gap-3">
-                                    <div className="p-2.5 bg-blue-600/20 rounded-xl text-blue-400">
-                                        <Info className="w-5 h-5" />
-                                    </div>
-                                    <div>
-                                        <h2 className="text-xl font-black text-white tracking-tight">Condition Details</h2>
-                                        <p className="text-blue-400 font-bold text-[10px] uppercase tracking-widest">{result.label}</p>
-                                    </div>
+                            {/* Center: Live Status & Processing (Fixed Widths to prevent shift) */}
+                            <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-2xl border border-white/5 shrink-0">
+                                <div className={`flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl transition-all min-w-[70px] ${uploadedImage ? 'bg-blue-600/40 text-blue-200' : 'bg-green-600/40 text-green-200'
+                                    }`}>
+                                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${uploadedImage ? 'bg-blue-400' : 'bg-green-400 animate-pulse'}`} />
+                                    <span className="text-[10px] font-bold uppercase tracking-tight">{uploadedImage ? 'Static' : 'Live'}</span>
                                 </div>
-                                <button
-                                    onClick={() => setShowRecs(false)}
-                                    className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all"
-                                >
-                                    <CloseIcon className="w-5 h-5" />
-                                </button>
+
+                                <div className="flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-600/20 text-cyan-200 min-w-[75px]">
+                                    <RefreshCw className={`w-3 h-3 shrink-0 ${isProcessing ? 'animate-spin' : ''} ${error ? 'text-red-400' : ''}`} />
+                                    <span className={`text-[10px] font-bold uppercase tracking-tight ${error ? 'text-red-400' : ''}`}>
+                                        {isProcessing ? 'Proc' : 'Ready'}
+                                    </span>
+                                </div>
                             </div>
 
-                            {/* Modal Body */}
-                            <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                                {/* Description */}
-                                <section>
-                                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-2">
-                                        <div className="w-1 h-2.5 bg-blue-500 rounded-full" /> Overview
-                                    </h3>
-                                    <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.description}</p>
-                                </section>
-
-                                {/* Causes */}
-                                {result.recommendations.causes && (
-                                    <section className="bg-white/5 rounded-xl p-3 border border-white/5">
-                                        <h3 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1.5">Common Causes</h3>
-                                        <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.causes}</p>
-                                    </section>
+                            {/* Right: Tools Group */}
+                            <div className="flex items-center gap-1">
+                                {!uploadedImage && (
+                                    <button
+                                        onClick={toggleCamera}
+                                        className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-95"
+                                        title="Switch Camera"
+                                    >
+                                        <SwitchCamera className="w-5 h-5" />
+                                    </button>
                                 )}
 
-                                {/* Care & Recommendations */}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <section className="bg-green-500/5 rounded-xl p-3 border border-green-500/10">
-                                        <h3 className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-1.5">Care Tips</h3>
-                                        <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.care}</p>
-                                    </section>
-                                    <section className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/10">
-                                        <h3 className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-1.5">AI Guidance</h3>
-                                        <p className="text-gray-300 text-[11px] leading-relaxed">{result.recommendations.recommendations}</p>
-                                    </section>
-                                </div>
+                                {/* Calibrate Lighting Toggle */}
+                                <button
+                                    onClick={() => setIsCalibrateEnabled(!isCalibrateEnabled)}
+                                    className={`p-2 rounded-xl transition-all duration-300 ${isCalibrateEnabled ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
+                                    title="Calibrate Lighting (Color Constancy)"
+                                >
+                                    <Sun size={18} className={isCalibrateEnabled ? 'animate-pulse' : ''} />
+                                </button>
 
-                                {/* Disclaimer */}
-                                <p className="text-[9px] text-gray-500 italic text-center pt-3 border-t border-white/5">
-                                    This information is for educational purposes only and not a substitute for professional medical advice.
-                                </p>
+                                <button
+                                    onClick={() => setIsNerdMode(!isNerdMode)}
+                                    className={`p-2 rounded-xl transition-all duration-300 ${isNerdMode ? 'bg-purple-500/20 text-purple-400 border border-purple-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
+                                    title="Nerd Mode (Debug)"
+                                >
+                                    <Bug size={18} className={isNerdMode ? 'animate-pulse' : ''} />
+                                </button>
+
+                                <button
+                                    onClick={() => setShowHistoryModal(true)}
+                                    className={`p-2 rounded-xl transition-all duration-300 ${patientHistory ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50' : 'bg-black/20 text-white/70 hover:bg-black/40 border border-white/10'}`}
+                                    title="Patient History"
+                                >
+                                    <ClipboardList size={18} className={patientHistory ? 'animate-pulse' : ''} />
+                                </button>
+
+
+                                {setShowHelp && (
+                                    <button
+                                        onClick={() => setShowHelp(true)}
+                                        className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-95"
+                                        title="Help"
+                                    >
+                                        <HelpCircle className="w-5 h-5" />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Instructions Removed (Moved to Sidebar) */}
+
+                        {/* Mode Indicator & Instructions (Only show if no detailed LLM result on mobile, or always on top of camera on desktop) */}
+                        <div className={`absolute bottom-6 left-4 right-4 lg:left-6 lg:right-auto transition-all duration-300 pointer-events-auto flex justify-center lg:block ${result?.recommendations ? 'lg:block hidden' : 'block'}`}>
+                            {result && !result.recommendations && (
+                                <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
+                                    <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-2">AI Diagnosis</p>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div className="flex flex-col">
+                                            <div className="flex items-center gap-2">
+                                                <p className={`text-xl font-bold ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease')
+                                                    ? 'text-red-400' : 'text-green-400'
+                                                    }`}>
+                                                    {(result.label || '').replace(/unknown_normal/gi, 'Normal') || 'Analyzing...'}
+                                                </p>
+                                                {result.triage && (
+                                                    <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md border ${result.triage.color}`}>
+                                                        {result.triage.level}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {result.triage && (
+                                                <p className="text-xs text-gray-400 mt-1 italic leading-tight">
+                                                    {result.triage.message}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <span className="text-sm font-black text-white/40 shrink-0">
+                                            {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div> {/* End Overlay UI */}
+                </div> {/* End Camera Section */}
+
+                {/* ── RIGHT/BOTTOM: Dedicated AI Assistant Panel ─────────────────── */}
+                {result?.recommendations && (
+                    <div className="w-full lg:w-[450px] bg-gray-950 flex flex-col flex-1 lg:flex-none animate-in fade-in slide-in-from-right-8 duration-500 border-t lg:border-t-0 border-white/10 overflow-hidden lg:h-full z-30 min-h-[300px]">
+
+                        {/* Header */}
+                        <div className="p-5 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-blue-900/40 to-cyan-900/10 shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-blue-500/20 rounded-xl text-blue-400 border border-blue-500/30">
+                                    <Bot className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-black text-white tracking-tight leading-none mb-1">AI Assistant</h2>
+                                    <p className="text-cyan-400 font-black text-[9px] uppercase tracking-widest leading-none">Fusion Analysis</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Scrollable Content */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+
+                            {/* Primary Diagnosis */}
+                            <div className="bg-black/40 rounded-2xl p-4 border border-white/5">
+                                <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" /> Primary Finding</p>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <p className={`text-2xl font-black ${(result.label || '').includes('Jaundice') || (result.label || '').includes('Disease') ? 'text-red-400' : 'text-green-400'}`}>
+                                        {(result.label || '').replace(/unknown_normal/gi, 'Normal')}
+                                    </p>
+                                    {result.triage && (
+                                        <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded border ${result.triage.color}`}>
+                                            {result.triage.level}
+                                        </span>
+                                    )}
+                                </div>
+                                {result.triage && <p className="text-xs text-gray-400 italic mb-3">{result.triage.message}</p>}
+                                <p className="text-gray-300 text-sm leading-relaxed">{result.recommendations.description}</p>
                             </div>
 
-                            {/* Close Button */}
-                            <div className="p-4 bg-gray-950/50 border-t border-white/10 shrink-0">
-                                <button
-                                    onClick={() => setShowRecs(false)}
-                                    className="w-full py-3 bg-white text-black font-black rounded-xl hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-widest text-[11px]"
-                                >
-                                    Close Details
-                                </button>
+                            {/* Medical Context (Causes) */}
+                            {result.recommendations.causes && (
+                                <div>
+                                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><HelpCircle className="w-3.5 h-3.5" /> Likely Causes</h3>
+                                    <div className="bg-blue-950/20 rounded-xl p-3 border border-blue-500/10">
+                                        <p className="text-cyan-100/70 text-sm leading-relaxed">{result.recommendations.causes}</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Actionable Advice */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
+                                <section className="bg-emerald-950/30 rounded-xl p-3.5 border border-emerald-500/20">
+                                    <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Check className="w-3.5 h-3.5" /> Care Tips</h3>
+                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.care}</p>
+                                </section>
+                                <section className="bg-violet-950/30 rounded-xl p-3.5 border border-violet-500/20">
+                                    <h3 className="text-[10px] font-black text-violet-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Info className="w-3.5 h-3.5" /> Next Steps</h3>
+                                    <p className="text-gray-300 text-xs leading-relaxed">{result.recommendations.recommendations}</p>
+                                </section>
+                            </div>
+
+                            {/* Disclaimer */}
+                            <div className="pt-4 border-t border-white/5">
+                                <p className="text-[10px] text-gray-500 italic flex items-start gap-2">
+                                    <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                                    This AI analysis fuses visual and textual data for educational purposes. It is not a clinical diagnosis. Please consult a healthcare professional.
+                                </p>
                             </div>
                         </div>
                     </div>
-                )
-            }
+                )}
+            </div> {/* End Main Application Layout Grid */}
 
             {/* Patient History Modal */}
             {

@@ -1,136 +1,140 @@
-import { Baby, Eye, ScanLine, Hand, Microscope, Smile, ChevronRight } from 'lucide-react'
+﻿import { Baby, Eye, ScanLine, Hand, Microscope, Smile } from 'lucide-react'
+
+const MODES = [
+    {
+        id: 'JAUNDICE_BODY',
+        label: 'Jaundice Body',
+        sub: 'Skin pigmentation',
+        icon: Baby,
+        accent: '#fbbf24',
+        bg: 'rgba(251,191,36,0.08)',
+        border: 'rgba(251,191,36,0.22)',
+    },
+    {
+        id: 'JAUNDICE_EYE',
+        label: 'Jaundice Eye',
+        sub: 'Scleral icterus',
+        icon: Eye,
+        accent: '#60a5fa',
+        bg: 'rgba(96,165,250,0.08)',
+        border: 'rgba(96,165,250,0.22)',
+    },
+    {
+        id: 'SKIN_DISEASE',
+        label: 'Skin Disease',
+        sub: 'Dermatological AI',
+        icon: ScanLine,
+        accent: '#f472b6',
+        bg: 'rgba(244,114,182,0.08)',
+        border: 'rgba(244,114,182,0.22)',
+    },
+    {
+        id: 'NAIL_DISEASE',
+        label: 'Nail Disease',
+        sub: 'Onychopathy scan',
+        icon: Hand,
+        accent: '#818cf8',
+        bg: 'rgba(129,140,248,0.08)',
+        border: 'rgba(129,140,248,0.22)',
+    },
+    {
+        id: 'ORAL_CANCER',
+        label: 'Oral Cancer',
+        sub: 'Mucosal screening',
+        icon: Microscope,
+        accent: '#34d399',
+        bg: 'rgba(52,211,153,0.08)',
+        border: 'rgba(52,211,153,0.22)',
+    },
+    {
+        id: 'TEETH',
+        label: 'Dental Health',
+        sub: 'Dentition analysis',
+        icon: Smile,
+        accent: '#fb923c',
+        bg: 'rgba(251,146,60,0.08)',
+        border: 'rgba(251,146,60,0.22)',
+    },
+]
+
+export const getModeAccent = (id) => MODES.find(m => m.id === id)?.accent ?? '#22d3ee'
+export const getModeLabel  = (id) => MODES.find(m => m.id === id)?.label  ?? id
 
 const ModelSelector = ({ activeMode, setActiveMode, isMobile }) => {
-    const modes = [
-        {
-            id: 'JAUNDICE_BODY',
-            label: 'Jaundice Baby',
-            shortLabel: 'Baby',
-            icon: <Baby className="w-4 h-4" />,
-            color: 'from-yellow-400 to-orange-500',
-            textColor: 'text-yellow-400',
-            bgColor: 'bg-yellow-500/10',
-            borderColor: 'border-yellow-500/20'
-        },
-        {
-            id: 'JAUNDICE_EYE',
-            label: 'Jaundice Adult',
-            shortLabel: 'Adult',
-            icon: <Eye className="w-4 h-4" />,
-            color: 'from-amber-400 to-yellow-600',
-            textColor: 'text-amber-400',
-            bgColor: 'bg-amber-500/10',
-            borderColor: 'border-amber-500/20'
-        },
-        {
-            id: 'SKIN_DISEASE',
-            label: 'Skin Disease',
-            shortLabel: 'Skin',
-            icon: <ScanLine className="w-4 h-4" />,
-            color: 'from-pink-400 to-rose-600',
-            textColor: 'text-rose-400',
-            bgColor: 'bg-rose-500/10',
-            borderColor: 'border-rose-500/20'
-        },
-        {
-            id: 'NAIL_DISEASE',
-            label: 'Nail Disease',
-            shortLabel: 'Nail',
-            icon: <Hand className="w-4 h-4" />,
-            color: 'from-indigo-400 to-blue-600',
-            textColor: 'text-indigo-400',
-            bgColor: 'bg-indigo-500/10',
-            borderColor: 'border-indigo-500/20'
-        },
-        // Cataract removed
-        {
-            id: 'ORAL_CANCER',
-            label: 'Oral Cancer',
-            shortLabel: 'Oral',
-            icon: <Microscope className="w-4 h-4" />,
-            color: 'from-emerald-400 to-teal-600',
-            textColor: 'text-emerald-400',
-            bgColor: 'bg-emerald-500/10',
-            borderColor: 'border-emerald-500/20'
-        },
-        {
-            id: 'TEETH',
-            label: 'Teeth Disease',
-            shortLabel: 'Teeth',
-            icon: <Smile className="w-4 h-4" />,
-            color: 'from-slate-300 to-gray-500',
-            textColor: 'text-slate-300',
-            bgColor: 'bg-slate-500/10',
-            borderColor: 'border-slate-500/20'
-        },
-    ]
-
     if (isMobile) {
+        // Horizontal scroll chips for mobile
         return (
-            <div className="w-full h-24 pointer-events-auto">
-                <div className="flex gap-3 overflow-x-auto pb-4 pt-1 px-4 no-scrollbar scroll-smooth snap-x">
-                    {modes.map((m) => (
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-0.5">
+                {MODES.map(({ id, label, icon: Icon, accent, bg, border }) => {
+                    const active = activeMode === id
+                    return (
                         <button
-                            key={m.id}
-                            onClick={() => setActiveMode(m.id)}
-                            className={`flex-shrink-0 snap-center w-28 h-20 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all duration-300 border ${activeMode === m.id
-                                ? `${m.borderColor} ${m.bgColor} scale-105 shadow-lg shadow-black/40`
-                                : 'bg-gray-900/40 border-white/5 text-gray-500'
-                                }`}
+                            key={id}
+                            onClick={() => setActiveMode(id)}
+                            className="flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wide transition-all duration-200"
+                            style={active ? { background: bg, border: `1px solid ${border}`, color: accent } : {
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.07)',
+                                color: 'var(--text-3)',
+                            }}
                         >
-                            <div className={`p-1 rounded-xl ${activeMode === m.id ? `bg-gradient-to-tr ${m.color} text-white` : 'bg-white/5'}`}>
-                                {m.icon}
-                            </div>
-                            <span className={`text-[9px] font-black uppercase tracking-tighter ${activeMode === m.id ? m.textColor : ''}`}>
-                                {m.shortLabel}
-                            </span>
-                            {activeMode === m.id && (
-                                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-1 bg-white rounded-full blur-[1px]"></div>
-                            )}
+                            <Icon style={{ width: 12, height: 12 }} />
+                            {label.split(' â€” ')[0]}
                         </button>
-                    ))}
-                </div>
+                    )
+                })}
             </div>
         )
     }
 
-    // Desktop Grid View
+    // Desktop list view
     return (
-        <div className="grid grid-cols-2 gap-3">
-            {modes.map((m) => (
-                <button
-                    key={m.id}
-                    onClick={() => setActiveMode(m.id)}
-                    className={`group relative flex flex-col items-start p-3 rounded-xl transition-all duration-300 border overflow-hidden ${activeMode === m.id
-                        ? `${m.borderColor} ${m.bgColor} shadow-xl shadow-black/20 translate-y-[-1px]`
-                        : 'bg-gray-900/10 border-white/5 hover:border-white/10 hover:bg-white/5'
-                        }`}
-                >
-                    {/* Active Gradient Background */}
-                    <div className={`absolute inset-0 opacity-0 group-hover:opacity-5 transition-opacity duration-300 bg-gradient-to-br ${m.color}`} />
+        <div className="flex flex-col gap-1">
+            {MODES.map(({ id, label, sub, icon: Icon, accent, bg, border }) => {
+                const active = activeMode === id
+                return (
+                    <button
+                        key={id}
+                        onClick={() => setActiveMode(id)}
+                        className="group relative flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-left transition-all duration-200 overflow-hidden"
+                        style={active ? {
+                            background: bg,
+                            border: `1px solid ${border}`,
+                        } : {
+                            background: 'transparent',
+                            border: '1px solid transparent',
+                        }}
+                    >
+                        {/* Left accent bar */}
+                        <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full transition-all duration-200"
+                            style={{ background: active ? accent : 'transparent' }} />
 
-                    <div className="flex justify-between items-center w-full mb-2">
-                        <div className={`p-1.5 rounded-lg transition-all duration-300 ${activeMode === m.id ? `bg-gradient-to-tr ${m.color} text-white shadow-lg` : 'bg-gray-800 text-gray-400 group-hover:text-gray-200'}`}>
-                            {m.icon}
+                        {/* Icon */}
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                            style={{ background: active ? `${accent}22` : 'rgba(255,255,255,0.06)' }}>
+                            <Icon style={{ width: 13, height: 13, color: active ? accent : 'var(--text-3)' }} />
                         </div>
-                        {activeMode === m.id && (
-                            <div className="flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded-full">
-                                <span className={`text-[7px] font-black uppercase tracking-widest ${m.textColor}`}>Active</span>
-                                <div className={`w-0.5 h-0.5 rounded-full animate-pulse bg-current ${m.textColor}`} />
-                            </div>
+
+                        {/* Labels */}
+                        <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-[11px] font-bold leading-tight truncate transition-colors duration-200"
+                                style={{ color: active ? 'var(--text-1)' : 'var(--text-2)' }}>
+                                {label}
+                            </span>
+                            <span className="text-[9px] leading-tight mt-0.5"
+                                style={{ color: active ? accent : 'var(--text-3)', opacity: active ? 0.8 : 1 }}>
+                                {sub}
+                            </span>
+                        </div>
+
+                        {/* Active dot */}
+                        {active && (
+                            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                style={{ background: accent, boxShadow: `0 0 6px ${accent}` }} />
                         )}
-                    </div>
-
-                    <div className="space-y-0 z-10">
-                        <span className={`text-[8px] font-bold uppercase tracking-widest opacity-40 ${activeMode === m.id ? m.textColor : 'text-white'}`}>Mode</span>
-                        <h4 className={`text-xs font-black tracking-tight transition-colors ${activeMode === m.id ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}`}>
-                            {m.label}
-                        </h4>
-                    </div>
-
-                    <ChevronRight className={`absolute bottom-4 right-4 w-4 h-4 transition-all duration-300 ${activeMode === m.id ? `opacity-100 ${m.textColor} translate-x-0` : 'opacity-0 -translate-x-2'}`} />
-                </button>
-            ))}
+                    </button>
+                )
+            })}
         </div>
     )
 }

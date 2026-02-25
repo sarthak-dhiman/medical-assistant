@@ -1,61 +1,57 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 import Webcam from 'react-webcam'
-import { Activity, Bug, Scan, RefreshCw, AlertCircle } from 'lucide-react'
+import { Activity, Bug, Scan, RefreshCw, AlertCircle, Loader2, Lock, Unlock, Cpu, Info, X } from 'lucide-react'
 import axios from 'axios'
 import ResultDisplay from '../ResultDisplay'
 import LoadingOverlay from '../components/LoadingOverlay'
+import { useHealth } from '../context/HealthContext'
 
 function AutomaticDetection() {
+    const { isNerdMode, setIsNerdMode, gpuMemory, setGpuMemory } = useHealth()
     const webcamRef = useRef(null)
     const [isScanning, setIsScanning] = useState(true)
     const [result, setResult] = useState(null)
-    const [debugInfo, setDebugInfo] = useState(null)
-    const [isNerdMode, setIsNerdMode] = useState(false)
+    const [isProcessing, setIsProcessing] = useState(false)
     const [error, setError] = useState(null)
-    const [detectedMode, setDetectedMode] = useState("INITIALIZING...")
-    const [isAppReady, setIsAppReady] = useState(false);
-    const API_BASE = `http://${window.location.hostname}:8000`;
+    const [detectedMode, setDetectedMode] = useState(null)
+    const [selectedConditionInfo, setSelectedConditionInfo] = useState(null)
+    const [isAppReady, setIsAppReady] = useState(false)
+    const API_BASE = `http://${window.location.hostname}:8000`
     const lastRequestTime = useRef(0)
-    const isProcessing = useRef(false)
-    const [facingMode, setFacingMode] = useState("user")
+    const isProcessingRef = useRef(false)
+    const [facingMode, setFacingMode] = useState('user')
+    const [lockedImage, setLockedImage] = useState(null)
 
-    // Poll Backend Health until Models are Ready
+    // Health polling
     useEffect(() => {
-        const HEALTH_URL = `${API_BASE}/health`; // Ensure full URL if not proxied
         const checkHealth = async () => {
             try {
-                const res = await fetch(HEALTH_URL);
-                const data = await res.json();
-                if (data.models_ready) {
-                    setIsAppReady(true);
-                }
-            } catch (e) {
-                console.error("Backend offline:", e);
-            }
-        };
-
-        if (!isAppReady) {
-            checkHealth();
-            const interval = setInterval(checkHealth, 3000);
-            return () => clearInterval(interval);
+                const res = await fetch(`${API_BASE}/health`)
+                const data = await res.json()
+                if (data.models_ready) setIsAppReady(true)
+                if (data.gpu_memory) setGpuMemory(data.gpu_memory)
+            } catch (e) { console.error('Backend offline:', e) }
         }
-    }, [isAppReady]);
+        if (!isAppReady) {
+            checkHealth()
+            const id = setInterval(checkHealth, 3000)
+            return () => clearInterval(id)
+        }
+    }, [isAppReady, setGpuMemory, API_BASE])
 
 
     // 2 FPS Sampling (500ms interval)
     const SAMPLE_INTERVAL = 500;
 
     const captureAndPredict = useCallback(async () => {
-        if (!isAppReady || !isScanning || !webcamRef.current) return;
-
-        const now = Date.now();
-        if (now - lastRequestTime.current < SAMPLE_INTERVAL || isProcessing.current) return;
-
-        const imageSrc = webcamRef.current.getScreenshot();
-        if (!imageSrc) return;
-
-        lastRequestTime.current = now;
-        isProcessing.current = true;
+        if (!isAppReady || !isScanning || !webcamRef.current) return
+        const now = Date.now()
+        if (now - lastRequestTime.current < SAMPLE_INTERVAL || isProcessingRef.current) return
+        const imageSrc = webcamRef.current.getScreenshot()
+        if (!imageSrc) return
+        lastRequestTime.current = now
+        isProcessingRef.current = true
+        setIsProcessing(true)
 
         try {
             // Send to Diagnostic Gateway
@@ -66,180 +62,288 @@ function AutomaticDetection() {
                 debug: isNerdMode
             });
 
-            const taskId = response.data.task_id;
-
-            // Poll for result (short poll)
-            // For a real 2FPS stream, we might want a websocket or just fire-and-forget/poll-once
-            // But here we'll do a quick poll
-            pollResult(taskId);
+            const taskId = response.data.task_id
+            pollResult(taskId)
 
         } catch (err) {
-            console.error("Auto Prediction Failed", err);
-            setError("Connection Lost");
-            isProcessing.current = false;
+            console.error('Auto Prediction Failed', err)
+            setError('Connection Lost')
+            isProcessingRef.current = false
+            setIsProcessing(false)
         }
-    }, [isScanning, isNerdMode, API_BASE]);
+    }, [isScanning, isNerdMode, API_BASE, isAppReady])
 
     const pollResult = async (taskId) => {
-        try {
-            let attempts = 0;
-            const maxAttempts = 20; // 2 seconds total wait
-
-            const check = async () => {
-                if (attempts >= maxAttempts) {
-                    isProcessing.current = false;
-                    return;
-                }
-                attempts++;
-
-                const res = await axios.get(`${API_BASE}/result/${taskId}`);
+        let attempts = 0
+        const check = async () => {
+            if (attempts++ >= 20) { isProcessingRef.current = false; setIsProcessing(false); return }
+            try {
+                const res = await axios.get(`${API_BASE}/result/${taskId}`)
                 if (res.data.state === 'SUCCESS') {
-                    const data = res.data.result;
+                    const data = res.data.result
                     if (data.status === 'error') {
-                        setError(data.error || "Detection Error");
-                        setResult(null);
+                        setError(data.error || 'Detection Error')
+                        setResult(null)
                     } else {
-                        setResult(data);
-                        setDetectedMode(data.mode); // Update the detected mode UI
-                        if (data.debug_info) setDebugInfo(data.debug_info);
-                        setError(null);
-                        isProcessing.current = false;
+                        setResult(data)
+                        setDetectedMode(data.mode)
+                        setError(null)
                     }
-                } else if (res.data.state === 'PENDING' || res.data.state === 'STARTED') {
-                    setTimeout(check, 100); // 100ms retry
+                    isProcessingRef.current = false
+                    setIsProcessing(false)
+                } else if (['PENDING', 'STARTED'].includes(res.data.state)) {
+                    setTimeout(check, 100)
                 } else {
-                    setError("Detection Failed");
-                    isProcessing.current = false;
+                    setError('Detection Failed')
+                    isProcessingRef.current = false
+                    setIsProcessing(false)
                 }
-            };
-
-            check();
-        } catch (e) {
-            console.error("Polling failed", e);
+            } catch (e) {
+                console.error('Polling failed', e)
+                isProcessingRef.current = false
+                setIsProcessing(false)
+            }
         }
-    };
+        check()
+    }
 
     useEffect(() => {
         const interval = setInterval(captureAndPredict, SAMPLE_INTERVAL);
         return () => clearInterval(interval);
     }, [captureAndPredict]);
 
-    const videoConstraints = {
-        width: 640,
-        height: 480,
-        facingMode: facingMode
-    };
-
+    const ACCENT_BY_MODE = {
+        JAUNDICE_BODY: '#fbbf24', JAUNDICE_EYE: '#60a5fa',
+        SKIN_DISEASE: '#f472b6', NAIL_DISEASE: '#818cf8',
+        ORAL_CANCER: '#34d399', TEETH: '#fb923c',
+    }
+    const accent = (detectedMode && ACCENT_BY_MODE[detectedMode]) ?? '#22d3ee'
 
     return (
-        <div className="w-full h-full bg-gray-950 flex flex-col relative overflow-hidden">
-
-            {/* Block UI until models are warm */}
+        <div className="relative w-full h-full overflow-hidden" style={{ background: '#000' }}>
             {!isAppReady && <LoadingOverlay />}
 
-            {/* HUD Overlay */}
-            <div className="absolute inset-0 z-10 pointer-events-none flex flex-col p-4 md:p-6 justify-between">
-
-                {/* Top HUD */}
-                <div className="flex justify-between items-start">
-                    <div className="flex flex-col gap-1">
-                        <span className="text-[8px] md:text-[10px] font-black text-cyan-500 uppercase tracking-widest animate-pulse">
-                            DIAGNOSTIC_GATEWAY_V1
-                        </span>
-                        <h2 className="text-xl md:text-2xl font-black text-white uppercase tracking-tighter flex items-center gap-3">
-                            {detectedMode}
-                            {isScanning && <div className="w-2 h-2 rounded-full bg-red-500 animate-ping"></div>}
-                        </h2>
-                    </div>
-
-                    <div className="flex gap-2 pointer-events-auto">
-                        <button
-                            onClick={() => setFacingMode(prev => prev === "user" ? "environment" : "user")}
-                            className="p-2 md:p-3 rounded-xl border transition-all bg-black/40 border-white/10 text-gray-400 hover:text-white hover:border-white/20"
-                        >
-                            <RefreshCw className="w-4 h-4 md:w-5 md:h-5" />
-                        </button>
-                        <button
-                            onClick={() => setIsNerdMode(!isNerdMode)}
-                            className={`p-2 md:p-3 rounded-xl border transition-all ${isNerdMode ? 'bg-purple-500/20 border-purple-500 text-purple-400' : 'bg-black/40 border-white/10 text-gray-400'}`}
-                        >
-                            <Bug className="w-4 h-4 md:w-5 md:h-5" />
-                        </button>
-                    </div>
-                </div>
-
-                {/* Center Reticle */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 md:w-64 md:h-64 border border-white/20 rounded-full flex items-center justify-center opacity-50">
-                    <div className="w-44 h-44 md:w-60 md:h-60 border-t border-b border-cyan-500/50 rounded-full animate-spin-slow"></div>
-                    <div className="absolute w-2 h-2 bg-cyan-500 rounded-full"></div>
-                </div>
-
-                {/* Bottom Results Panel */}
-                <div className="bg-black/60 backdrop-blur-xl border border-white/10 p-4 md:p-6 rounded-3xl w-full max-w-2xl mx-auto mb-20 md:mb-10 transition-all pointer-events-auto">
-                    {result ? (
-                        <div className="flex items-center gap-4 md:gap-6">
-                            <div className={`w-14 h-14 md:w-20 md:h-20 rounded-2xl flex items-center justify-center border-2 shadow-[0_0_20px_rgba(0,0,0,0.5)] ${result.label === 'Normal' ? 'border-green-500 bg-green-500/10' :
-                                result.label.includes('No') ? 'border-gray-500 bg-gray-500/10' : 'border-red-500 bg-red-500/10'
-                                }`}>
-                                <Activity className={`w-6 h-6 md:w-8 md:h-8 ${result.label === 'Normal' ? 'text-green-500' :
-                                    result.label.includes('No') ? 'text-gray-500' : 'text-red-500'
-                                    }`} />
+            {/* Modal */}
+            {selectedConditionInfo && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
+                    <div className="w-full max-w-md rounded-2xl glass-over overflow-hidden shadow-2xl animate-fade-up border" style={{ borderColor: 'rgba(255,255,255,0.15)' }}>
+                        <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                            <div className="flex items-center gap-2">
+                                <div className="w-2.5 h-2.5 rounded-full" style={{ background: accent, boxShadow: `0 0 10px ${accent}` }} />
+                                <h3 className="text-white font-black text-lg">{selectedConditionInfo.label}</h3>
                             </div>
-
-                            <div className="flex flex-col flex-1">
-                                <span className="text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Diagnosis</span>
-                                <div className="flex items-center gap-3">
-                                    <h3 className="text-xl md:text-3xl font-black text-white leading-none tracking-tight">
-                                        {result.label}
-                                    </h3>
-                                    {result.triage && (
-                                        <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded border ${result.triage.color}`}>
-                                            {result.triage.level}
-                                        </span>
-                                    )}
+                            <button onClick={() => setSelectedConditionInfo(null)} className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="p-5 flex flex-col gap-4">
+                            {selectedConditionInfo.triage && (
+                                <div className="p-3 rounded-xl border" style={{ background: 'rgba(0,0,0,0.3)', borderColor: 'rgba(255,255,255,0.05)' }}>
+                                    <span className="text-[10px] font-black uppercase tracking-widest block mb-1" style={{ color: accent }}>Triage Level</span>
+                                    <p className="text-sm text-gray-300 font-bold">{selectedConditionInfo.triage.level}</p>
+                                    <p className="text-xs text-gray-400 mt-1">{selectedConditionInfo.triage.message}</p>
                                 </div>
-                                {result.triage && (
-                                    <p className="text-xs text-gray-400 mt-1 mb-1 italic">
-                                        {result.triage.message}
-                                    </p>
-                                )}
-                                <div className="flex items-center gap-2 mt-2">
-                                    <div className="h-1.5 flex-1 bg-gray-800 rounded-full overflow-hidden">
-                                        <div
-                                            className={`h-full rounded-full transition-all duration-500 ${result.label === 'Normal' ? 'bg-green-500' : 'bg-red-500'
-                                                }`}
-                                            style={{ width: `${(result.confidence || 0) * 100}%` }}
-                                        ></div>
-                                    </div>
-                                    <span className="text-[10px] font-bold text-gray-400 shrink-0">
-                                        {((result.confidence || 0) * 100).toFixed(1)}% CONFIDENCE
-                                    </span>
-                                </div>
+                            )}
+                            <div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 mb-1 block">Clinical Reference</span>
+                                <p className="text-sm text-gray-300 leading-relaxed">
+                                    {selectedConditionInfo.label === 'Normal' || selectedConditionInfo.label === 'Healthy'
+                                        ? "No significant morphological irregularities detected by the vision model."
+                                        : "This condition requires clinical evaluation. Do not rely solely on AI screening."}
+                                </p>
                             </div>
                         </div>
-                    ) : (
-                        <div className="flex items-center justify-center gap-3 text-gray-500 h-16 md:h-20">
-                            <Scan className="w-5 h-5 animate-pulse" />
-                            <span className="text-xs font-bold uppercase tracking-widest">Scanning Subject...</span>
-                        </div>
-                    )}
+                    </div>
                 </div>
-            </div>
+            )}
 
-            {/* Webcam Feed */}
-            <Webcam
-                ref={webcamRef}
-                audio={false}
-                screenshotFormat="image/jpeg"
-                videoConstraints={videoConstraints}
-                className="absolute inset-0 w-full h-full object-cover"
-            />
+            {/* ── Live camera feed or Frozen Image ───────────────────────────── */}
+            {lockedImage ? (
+                <img
+                    src={lockedImage}
+                    alt="Locked Frame"
+                    className="absolute inset-0 w-full h-full object-cover"
+                />
+            ) : (
+                <Webcam
+                    ref={webcamRef}
+                    audio={false}
+                    screenshotFormat="image/jpeg"
+                    videoConstraints={{ width: 1280, height: 720, facingMode }}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    onUserMediaError={(e) => { console.error('Webcam error:', e); setError('Camera access denied.') }}
+                />
+            )}
 
-            {/* Visualizer Overlay (Masks, BBoxes, Nerd Stats) */}
-            <div className="absolute inset-0 pointer-events-none">
+            {/* â”€â”€ Scan-line â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {isScanning && (
+                <div className="absolute left-0 right-0 h-px z-10 pointer-events-none animate-scan-line"
+                    style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)`, opacity: 0.5 }} />
+            )}
+
+            {/* â”€â”€ Result / visualizer overlays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <div className="absolute inset-0 pointer-events-none z-10">
                 <ResultDisplay result={result} mode={detectedMode} isNerdMode={isNerdMode} />
             </div>
 
+            {/* â”€â”€ Top HUD row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <div className="absolute top-0 left-0 right-0 z-20 flex items-start justify-between p-4 md:p-5 pointer-events-none">
+
+                {/* Mode badge */}
+                <div className="glass-over rounded-2xl px-4 py-2.5 flex items-center gap-3">
+                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{
+                            background: isScanning ? accent : '#4b5568',
+                            boxShadow: isScanning ? `0 0 10px ${accent}` : 'none',
+                            animation: isScanning ? 'pulse 1.2s infinite' : 'none',
+                        }} />
+                    <div>
+                        <p className="label" style={{ color: accent }}>Auto-Pilot</p>
+                        <p className="text-sm font-black text-white tracking-tight leading-none mt-0.5">
+                            {detectedMode ? detectedMode.replace(/_/g, ' ') : 'Scanning'}
+                        </p>
+                    </div>
+                    {isProcessing && <Loader2 className="w-4 h-4 animate-spin ml-1 flex-shrink-0" style={{ color: accent }} />}
+                </div>
+
+                {/* Controls */}
+                <div className="flex items-center gap-2 pointer-events-auto">
+                    {gpuMemory && (
+                        <div className="hidden md:flex items-center gap-1.5 glass-over px-2.5 py-1.5 rounded-xl">
+                            <Cpu className="w-3 h-3" style={{ color: '#34d399' }} />
+                            <span className="mono text-[10px] font-bold" style={{ color: '#34d399' }}>{gpuMemory} MB</span>
+                        </div>
+                    )}
+                    <button onClick={() => setFacingMode(m => m === 'user' ? 'environment' : 'user')}
+                        className="p-2.5 rounded-xl transition-all glass-over hover:bg-white/10">
+                        <RefreshCw className="w-4 h-4 text-white/70" />
+                    </button>
+                    <button onClick={() => setIsNerdMode(n => !n)}
+                        className="p-2.5 rounded-xl transition-all"
+                        style={isNerdMode ? { background: 'rgba(167,139,250,0.2)', border: '1px solid rgba(167,139,250,0.4)' } : {}}>
+                        <Bug className="w-4 h-4" style={{ color: isNerdMode ? '#a78bfa' : 'rgba(255,255,255,0.5)' }} />
+                    </button>
+                </div>
+            </div>
+
+            {/* â”€â”€ Center reticle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            {!result && isScanning && (
+                <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                    <div className="relative flex items-center justify-center">
+                        <div className="absolute w-48 h-48 rounded-full border animate-spin-slow"
+                            style={{ borderColor: `${accent}20`, borderTopColor: `${accent}60` }} />
+                        <div className="absolute w-36 h-36 rounded-full border"
+                            style={{ borderColor: `${accent}15` }} />
+                        <div className="w-2 h-2 rounded-full" style={{ background: accent, boxShadow: `0 0 12px ${accent}` }} />
+                    </div>
+                </div>
+            )}
+
+            {/* â”€â”€ Bottom result panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <div className="absolute bottom-0 left-0 right-0 z-20 p-4 md:p-5 pb-6 pointer-events-none">
+
+                {/* Scan toggle (desktop) */}
+                <div className="hidden md:flex justify-center mb-4 pointer-events-auto">
+                    <button
+                        onClick={() => {
+                            if (isScanning) {
+                                setLockedImage(webcamRef.current?.getScreenshot())
+                            } else {
+                                setLockedImage(null)
+                            }
+                            setIsScanning(!isScanning)
+                        }}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider transition-all"
+                        style={!isScanning ? {
+                            background: 'rgba(251,113,133,0.15)', border: '1px solid rgba(251,113,133,0.3)', color: '#fb7185',
+                        } : {
+                            background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)',
+                        }}
+                    >
+                        {isScanning ? <><Lock className="w-3.5 h-3.5 text-gray-400" /> Lock Results</> : <><Unlock className="w-3.5 h-3.5" /> Unlock Session</>}
+                    </button>
+                </div>
+
+                {/* Result card */}
+                {(result || error) && (
+                    <div className="glass-over rounded-2xl p-4 md:max-w-lg md:mx-auto animate-fade-up"
+                        style={{ border: `1px solid ${accent}25` }}>
+                        {error && !result ? (
+                            <div className="flex items-center gap-3 text-sm" style={{ color: '#fb7185' }}>
+                                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                                {error}
+                            </div>
+                        ) : result && (
+                            <div className="flex items-center gap-4">
+                                {/* Confidence ring proxy */}
+                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 border-2"
+                                    style={{
+                                        background: `${accent}10`,
+                                        borderColor: `${accent}40`,
+                                        boxShadow: `0 0 20px ${accent}20`,
+                                    }}>
+                                    <Activity className="w-6 h-6" style={{ color: accent }} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <p className="label" style={{ color: accent }}>Diagnosis</p>
+                                        {!isScanning && result.label !== 'Normal' && result.label !== 'Healthy' && (
+                                            <button
+                                                onClick={() => setSelectedConditionInfo(result)}
+                                                className="pointer-events-auto flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors"
+                                                style={{ background: `${accent}20`, color: accent, border: `1px solid ${accent}40` }}
+                                            >
+                                                <Info className="w-3 h-3" /> Learn More
+                                            </button>
+                                        )}
+                                    </div>
+                                    <h3 className="text-lg font-black text-white tracking-tight leading-none truncate">
+                                        {result.label}
+                                    </h3>
+                                    {result.triage && (
+                                        <p className="text-[11px] mt-1 leading-snug" style={{ color: 'var(--text-2)' }}>
+                                            {result.triage.message}
+                                        </p>
+                                    )}
+                                    {result.confidence != null && (
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.1)' }}>
+                                                <div className="h-full rounded-full transition-all duration-700"
+                                                    style={{ width: `${(result.confidence * 100).toFixed(0)}%`, background: accent }} />
+                                            </div>
+                                            <span className="mono text-[10px] font-bold flex-shrink-0" style={{ color: accent }}>
+                                                {(result.confidence * 100).toFixed(1)}%
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Mobile scan toggle */}
+                <div className="flex md:hidden justify-center mt-3 pointer-events-auto">
+                    <button
+                        onClick={() => {
+                            if (isScanning) {
+                                setLockedImage(webcamRef.current?.getScreenshot())
+                            } else {
+                                setLockedImage(null)
+                            }
+                            setIsScanning(!isScanning)
+                        }}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider transition-all"
+                        style={!isScanning ? {
+                            background: 'rgba(251,113,133,0.15)', border: '1px solid rgba(251,113,133,0.3)', color: '#fb7185',
+                        } : {
+                            background: 'rgba(0,0,0,0.45)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)',
+                        }}
+                    >
+                        {isScanning ? <><Lock className="w-3.5 h-3.5 text-gray-400" /> Lock</> : <><Unlock className="w-3.5 h-3.5" /> Unlock</>}
+                    </button>
+                </div>
+            </div>
         </div>
     )
 }

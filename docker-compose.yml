@@ -45,10 +45,10 @@ services:
     restart: no
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
-      interval: 45s
-      timeout: 15s
-      retries: 5
-      start_period: 120s
+      interval: 12s
+      timeout: 20s
+      retries: 20
+      start_period: 30s
     depends_on:
       - redis
     networks:
@@ -63,8 +63,9 @@ services:
         condition: service_started
       backend:
         condition: service_started
-    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=1 -Q q_heavy_cv,celery
+    command: celery -A web_app.backend.celery_app worker --loglevel=info --pool=threads --concurrency=2 -Q q_heavy_cv,celery
     volumes:
+      - ./web_app/backend:/app/web_app/backend
       - ./saved_models:/app/saved_models
       - ./saved_models_onnx:/app/saved_models_onnx # ONNX models
       - ./external:/app/external
@@ -101,8 +102,9 @@ services:
         condition: service_started
       backend:
         condition: service_started
-    command: celery -A web_app.backend.celery_app worker --loglevel=info --concurrency=4 -Q q_lightweight
+    command: celery -A web_app.backend.celery_app worker --loglevel=info --pool=threads --concurrency=4 -Q q_lightweight
     volumes:
+      - ./web_app/backend:/app/web_app/backend
       - ./saved_models:/app/saved_models
       - ./saved_models_onnx:/app/saved_models_onnx # ONNX models
       - ./external:/app/external

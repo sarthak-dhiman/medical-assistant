@@ -114,7 +114,7 @@ async def predict_endpoint(request: PredictRequest):
         queue = "q_heavy_cv" if request.mode in heavy_modes else "q_lightweight"
         
         task = predict_task.apply_async(
-            args=[request.image, request.mode, request.debug, request.is_preprocessed, request.calibrate, request.crop_bbox, request.mouth_open_ratio, request.patient_history],
+            args=[request.image, request.mode, request.debug, request.is_preprocessed, request.calibrate, request.is_upload, request.crop_bbox, request.mouth_open_ratio, request.patient_history],
             queue=queue
         )
         logger.info(f"Task enqueued to {queue}: {task.id} (Mode: {request.mode})")
