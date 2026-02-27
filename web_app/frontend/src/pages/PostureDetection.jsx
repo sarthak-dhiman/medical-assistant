@@ -330,6 +330,14 @@ function PostureDetection() {
                                 )}
                             </div>
                         </div>
+                    ) : error ? (
+                        <div className="flex flex-col items-center justify-center gap-2 text-red-400 h-16 md:h-20 animate-in fade-in slide-in-from-bottom-2">
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-5 h-5" />
+                                <span className="text-xs font-bold uppercase tracking-widest">Detection Error</span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 max-w-[200px] text-center line-clamp-1">{error}</p>
+                        </div>
                     ) : (
                         <div className="flex items-center justify-center gap-3 text-gray-500 h-16 md:h-20">
                             <Target className="w-5 h-5 animate-pulse" />
@@ -351,7 +359,7 @@ function PostureDetection() {
             {/* Skeleton + Overlay Canvas */}
             <canvas
                 ref={canvasRef}
-                className="absolute inset-0 w-full h-full object-cover z-20 opacity-90 pointer-events-none"
+                className="absolute inset-0 w-full h-full object-cover z-[5] opacity-90 pointer-events-none"
             />
         </div>
     )

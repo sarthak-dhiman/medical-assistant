@@ -9,7 +9,7 @@ import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, I
 
 const API_URL = `http://${window.location.hostname}:8000`
 
-const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShowHelp, isAppReady = true }) => {
+const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShowHelp, isAppReady = true, setSelectedConditionInfo }) => {
     const webcamRef = useRef(null)
     const [result, setResult] = useState(null)
     const [error, setError] = useState(null)
@@ -21,6 +21,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
     const [isFaceMeshReady, setIsFaceMeshReady] = useState(false)
     const [patientHistory, setPatientHistory] = useState("")
     const [showHistoryModal, setShowHistoryModal] = useState(false)
+    const [showFullResults, setShowFullResults] = useState(false)
 
     // Refs for MediaPipe
     const faceMeshRef = useRef(null)
@@ -473,6 +474,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
         isProcessingRef.current = false;
         setIsProcessing(false);
         setIsCalibrateEnabled(false);
+        setShowFullResults(false);
         lastRequestRef.current = { image: null, mode: null };
     }, [mode])
 
@@ -514,7 +516,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 <img
                     src={uploadedImage}
                     alt="Uploaded"
-                    className="w-full h-full object-contain bg-black"
+                    className="absolute inset-0 w-full h-full object-contain bg-black"
                 />
             ) : (
                 <Webcam
@@ -531,7 +533,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                         console.error("Camera Error:", err);
                         setError("Camera Access Denied. (HTTPS required?)");
                     }}
-                    className="w-full h-full object-cover" // Ensure it covers
+                    className="absolute inset-0 w-full h-full object-cover" // Ensure it covers
                 />
             )}
 
@@ -586,12 +588,12 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
             <div className={`flex flex-col lg:flex-row h-full w-full `}>
 
                 {/* ── LEFT: Video/Image Area ────────────────────────────────────── */}
-                <div className={`relative flex-1 min-h-0 bg-black ${result?.recommendations ? 'lg:border-r border-white/10' : ''}`}>
+                <div className={`relative flex-1 min-h-0 ${result?.recommendations ? 'lg:border-r border-white/10' : ''}`}>
                     {/* Overlay UI */}
-                    <div className="absolute inset-0 pointer-events-none">
+                    <div className="absolute inset-0 pointer-events-none z-10">
                         {/* Error Overlay */}
-                        {error && !isProcessing && (
-                            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-950/90 border-2 border-red-500/50 rounded-2xl p-6 text-center shadow-[0_0_50px_rgba(239,68,68,0.2)] z-50 animate-in fade-in zoom-in-95 backdrop-blur-md max-w-sm w-[90%] pointer-events-auto">
+                        {error && !isProcessing && !isGPUFull && (
+                            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-950/90 border-2 border-red-500/50 rounded-2xl p-6 text-center shadow-[0_0_50px_rgba(239,68,68,0.2)] z-[60] animate-in fade-in zoom-in-95 backdrop-blur-md max-w-sm w-[90%] pointer-events-auto">
                                 <h3 className="text-red-400 font-black text-lg mb-2 flex items-center justify-center gap-2">
                                     <Bug className="w-5 h-5" /> Analysis Failed
                                 </h3>
@@ -687,9 +689,9 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
 
                         {/* Instructions Removed (Moved to Sidebar) */}
 
-                        {/* Mode Indicator & Instructions (Only show if no detailed LLM result on mobile, or always on top of camera on desktop) */}
-                        <div className={`absolute bottom-6 left-4 right-4 lg:left-6 lg:right-auto transition-all duration-300 pointer-events-auto flex justify-center lg:block ${result?.recommendations ? 'lg:block hidden' : 'block'}`}>
-                            {result && !result.recommendations && (
+                        {/* Mode Indicator & Instructions (Condensed view) */}
+                        <div className={`absolute bottom-6 left-4 right-4 lg:left-6 lg:right-auto transition-all duration-300 pointer-events-auto flex justify-center lg:block z-30 ${result?.recommendations && showFullResults ? 'hidden' : 'block'}`}>
+                            {result && (
                                 <div className="bg-black/80 backdrop-blur-md rounded-2xl p-4 border border-white/10 w-full lg:w-auto lg:max-w-sm shadow-2xl animate-in fade-in slide-in slide-in-from-bottom-4 duration-500">
                                     <p className="text-gray-500 text-[10px] font-black uppercase tracking-widest mb-2">AI Diagnosis</p>
                                     <div className="flex items-center justify-between gap-4">
@@ -712,9 +714,19 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                                                 </p>
                                             )}
                                         </div>
-                                        <span className="text-sm font-black text-white/40 shrink-0">
-                                            {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
-                                        </span>
+                                        <div className="flex flex-col items-end gap-2 shrink-0">
+                                            <span className="text-sm font-black text-white/40 shrink-0">
+                                                {result.confidence ? `${(result.confidence * 100).toFixed(1)}%` : ''}
+                                            </span>
+                                            {result.recommendations && (
+                                                <button
+                                                    onClick={() => setShowFullResults(true)}
+                                                    className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-blue-300 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all active:scale-95"
+                                                >
+                                                    Learn More
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -723,7 +735,7 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                 </div> {/* End Camera Section */}
 
                 {/* ── RIGHT/BOTTOM: Dedicated AI Assistant Panel ─────────────────── */}
-                {result?.recommendations && (
+                {result?.recommendations && showFullResults && (
                     <div className="w-full lg:w-[450px] bg-gray-950 flex flex-col flex-1 lg:flex-none animate-in fade-in slide-in-from-right-8 duration-500 border-t lg:border-t-0 border-white/10 overflow-hidden lg:h-full z-30 min-h-[300px]">
 
                         {/* Header */}
@@ -737,6 +749,12 @@ const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShow
                                     <p className="text-cyan-400 font-black text-[9px] uppercase tracking-widest leading-none">Fusion Analysis</p>
                                 </div>
                             </div>
+                            <button
+                                onClick={() => setShowFullResults(false)}
+                                className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-95"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
                         </div>
 
                         {/* Scrollable Content */}

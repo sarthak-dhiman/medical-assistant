@@ -17,6 +17,7 @@ services:
       - "8000:8000"
     command: uvicorn web_app.backend.main:app --host 0.0.0.0 --port 8000
     volumes:
+      - ./web_app/backend:/app/web_app/backend # Live-reload Python code
       - ./saved_models:/app/saved_models # Mount models (Hot-load + No Copy)
       - ./saved_models_onnx:/app/saved_models_onnx # ONNX models (Hot-load)
       - ./external:/app/external # Mount external repos (YOLOv7)

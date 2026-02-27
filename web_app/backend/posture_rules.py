@@ -16,6 +16,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# --- Calibration Offsets ---
+# MediaPipe Pose landmarks for ears/shoulders often result in a non-zero angle 
+# even when a person feels they are "straight". This offset aligns the 
+# clinical "Normal" with the expected user baseline.
+CALIBRATION = {
+    "fhp_offset": 10.0, # degrees
+}
+
 # ─── MediaPipe landmark indices ──────────────────────────────────────────────
 # https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
 LM = {
@@ -152,7 +160,10 @@ def _check_forward_head(lms: list[dict]) -> dict:
         return {**result, "severity": "Unknown", "angle": None, "note": "Ear/shoulder not visible"}
 
     angles = [_vertical_angle(sh, ear) for sh, ear in pairs]
-    angle  = sum(angles) / len(angles)
+    raw_angle  = sum(angles) / len(angles)
+    
+    # Apply calibration offset
+    angle = max(0.0, raw_angle - CALIBRATION["fhp_offset"])
 
     severity = _severity_from_value(angle,
         THRESHOLDS["fhp_mild"], THRESHOLDS["fhp_moderate"], THRESHOLDS["fhp_severe"])

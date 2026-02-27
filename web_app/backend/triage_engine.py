@@ -46,7 +46,7 @@ class ClinicalTriageEngine:
         Evaluates the prediction label and returns triage information based on severity and dynamic confidence.
         """
         # Edge cases and low confidence
-        if not label or label in ["No Hand Detected", "No Skin on Body"]:
+        if not label or label in ["No Hand Detected", "No Skin on Body", "No Posture Detected", "Acquiring Target..."]:
             return {
                 "level": "UNKNOWN",
                 "message": "Diagnosis unclear. Please try scanning again with better lighting and positioning.",

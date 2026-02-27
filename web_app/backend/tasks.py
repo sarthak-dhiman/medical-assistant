@@ -12,6 +12,7 @@ import mediapipe as mp
 import datetime
 import uuid
 import json
+import math
 try:
     from mmpose.apis import MMPoseInferencer
 except ImportError:
@@ -389,16 +390,16 @@ def _do_init_models():
     if 'q_lightweight' in cmd_line and 'q_heavy_cv' not in cmd_line:
         is_heavy = False
 
+    logger.info(f"🚀 WORKER INIT: Loading SegFormer + classifiers (Heavy? {is_heavy})")
+    errors = load_models()
+    if errors:
+        logger.error(f"❌ MODEL LOAD ERRORS: {errors}")
+    else:
+        logger.info("✅ SegFormer Ready.")
+
     if is_heavy:
-        logger.info("🚀 HEAVY WORKER INIT: Loading SegFormer + classifiers...")
-        errors = load_models()
-        if errors:
-            logger.error(f"❌ WORKER INIT FAILED: {errors}")
-        else:
-            logger.info("✅ SegFormer Ready.")
         warmup_heavy_models()
     else:
-        logger.info("🚀 LIGHT WORKER INIT: Loading classifiers (no SegFormer)...")
         warmup_light_models()
 
 
@@ -1019,45 +1020,29 @@ def _process_cataract(frame, debug, calibrate=False):
         logger.error(f"Cataract processing error: {e}")
         return {"status": "error", "error": f"Cataract detection failed: {str(e)}"}
 
-def _process_posture(frame, w, h, debug, result):
-    """Process posture detection using MediaPipe Pose."""
-    try:
-        detector = get_pose_detector()
-        if not detector:
-            return {"status": "error", "error": "Pose detector not initialized."}
-            
-        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pose_results = detector.process(img_rgb)
-        
-        if not pose_results.pose_landmarks:
-            result.update({
-                "label": "No Person Detected",
-                "confidence": 0.0,
-                "debug_info": {"error": "Make sure your full upper body is visible."}
+def rectify_landmarks(landmarks, src_w, src_h, target_ratio=4/3):
+    """
+    Rectifies normalized landmarks from source aspect ratio to a target aspect ratio.
+    Ensures that landmarks represent a consistent geometry regardless of camera stretching.
+    Uses centering logic to avoid shifting the skeleton.
+    """
+    current_ratio = src_w / src_h
+    ratio_factor = current_ratio / target_ratio
+    
+    rectified = []
+    for lm in landmarks:
+        if isinstance(lm, dict):
+            # Scale X relative to the center (0.5)
+            x_rect = (lm['x'] - 0.5) * ratio_factor + 0.5
+            rectified.append({
+                **lm,
+                "x": float(x_rect),
+                "y": float(lm['y'])
             })
-            return result
-            
-        # Extract landmarks for inference (list of x, y, z floats)
-        landmarks = []
-        frontend_landmarks = []
-        for lm in pose_results.pose_landmarks.landmark:
-            landmarks.extend([lm.x, lm.y])
-            frontend_landmarks.append({"x": lm.x, "y": lm.y, "visibility": lm.visibility})
-            
-        label, conf, debug_info = inference_service.predict_posture(landmarks, debug=debug)
-        
-        debug_info["landmarks"] = frontend_landmarks
-        
-        result.update({
-            "label": label,
-            "confidence": float(conf),
-            "debug_info": debug_info
-        })
-        
-        return result
-    except Exception as e:
-        logger.error(f"Posture processing error: {e}")
-        return {"status": "error", "error": f"Posture detection failed: {str(e)}"}
+        else: # basic [x, y] list
+            pass # Not used currently for flat lists
+    return rectified
+
 
 
 def _process_posture_deformity(frame, w, h, debug, result):
@@ -1090,8 +1075,10 @@ def _process_posture_deformity(frame, w, h, debug, result):
                 "visibility": float(getattr(lm, "visibility", 1.0))
             })
         
-        # Run the geometry-based deformity classifier
-        analysis = classify_posture_deformity(frontend_landmarks, debug=debug)
+        # Run the geometry-based deformity classifier on SQUARE rectified landmarks
+        # (Square ensures angles like 90 deg are physically 90 deg in the logic)
+        rectified_lms = rectify_landmarks(frontend_landmarks, w, h, target_ratio=1.0)
+        analysis = classify_posture_deformity(rectified_lms, debug=debug)
         
         # Top-level label for triage engine
         label = analysis["summary_label"]
@@ -1153,12 +1140,15 @@ def _process_posture(frame, w, h, debug, result):
         debug_info = {}
 
         if mp_result.pose_landmarks is None:
+            logger.info("Posture: No landmarks detected by MediaPipe.")
             result.update({
                 "label": "No Posture Detected",
                 "confidence": 0.0,
                 "debug_info": debug_info,
             })
             return result
+
+        logger.info("Posture: Landmarks detected. Processing classification...")
 
         lm = mp_result.pose_landmarks.landmark
 
@@ -1175,10 +1165,14 @@ def _process_posture(frame, w, h, debug, result):
         result["landmarks"] = all_landmarks  # full 33-pt array
 
         # --- 12-point flat vector for classifier ---
+        # RECTIFY to 4:3 (Training Aspect Ratio) before classification
+        # We scale X relative to center 0.5 to avoid shifting the skeleton
         flat_features = []
+        ratio_factor = (w / h) / (4 / 3)
         for idx in POSE_INDICES:
             pt = lm[idx]
-            flat_features.append(float(pt.x))
+            x_rect = (float(pt.x) - 0.5) * ratio_factor + 0.5
+            flat_features.append(x_rect)
             flat_features.append(float(pt.y))
 
         # Safety pad/truncate
@@ -1188,8 +1182,8 @@ def _process_posture(frame, w, h, debug, result):
             flat_features = flat_features[:FEATURE_SIZE]
 
         try:
-            import torch
             label, conf, _ = inference_service.predict_posture(flat_features, debug=debug)
+            logger.info(f"Posture: Model prediction: {label} (Conf: {conf:.2f})")
             
             # --- Neck Posture Heuristic ---
             # If the model predicts "Good Form", we double-check the neck alignment
@@ -1199,19 +1193,25 @@ def _process_posture(frame, w, h, debug, result):
                 nose = lm[0]
                 
                 if ls.visibility > 0.3 and rs.visibility > 0.3 and nose.visibility > 0.3:
-                    shoulder_y = (ls.y + rs.y) / 2.0
-                    shoulder_width = abs(ls.x - rs.x)
+                    # Use Physical Pixel Distance for scale-invariant heuristic
+                    # shoulder_width in pixels
+                    sh_dx = abs(ls.x - rs.x) * w
+                    sh_dy = abs(ls.y - rs.y) * h
+                    shoulder_width_px = math.hypot(sh_dx, sh_dy)
                     
-                    if shoulder_width > 0:
-                        # Normalize vertical neck length by shoulder width to make it scale-invariant
-                        neck_ratio = (shoulder_y - nose.y) / shoulder_width
+                    # Vertical distance from nose to shoulder line in pixels
+                    shoulder_avg_y_px = ((ls.y + rs.y) / 2.0) * h
+                    nose_y_px = nose.y * h
+                    vertical_neck_px = shoulder_avg_y_px - nose_y_px
+                    
+                    if shoulder_width_px > 0:
+                        # Normalize vertical neck length by shoulder width
+                        neck_ratio = vertical_neck_px / shoulder_width_px
                         
-                        # If neck_ratio is too small, head is pitched forward or down heavily
-                        # If neck_ratio is too high, head is tilted excessively backward/up
-                        # Typical upright ratio is ~0.4 to 0.75 depending on camera angle
+                        # Upright ratio for 4:3 is ~0.45 to 0.70
                         if neck_ratio < 0.35:
                             label = "Bad Form (Neck Down)"
-                            conf = 0.85 # High confidence override
+                            conf = 0.85
                             debug_info["heuristic_override"] = f"neck_ratio={neck_ratio:.2f}"
                         elif neck_ratio > 0.85:
                             label = "Bad Form (Neck Up)"

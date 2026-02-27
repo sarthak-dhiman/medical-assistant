@@ -6,7 +6,6 @@ Teeth Disease, and Posture models.
 
 EfficientNet classifiers (Nails, Oral Cancer, Teeth)  → ONNX Runtime
 Posture classifier (linear MLP)                        → ONNX Runtime
-Burns (YOLOv7 .pt)                                     → PyTorch (YOLO stays)
 """
 
 import logging
