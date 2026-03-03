@@ -23,7 +23,7 @@ function ManualDetection() {
     const [showMobileMenu, setShowMobileMenu] = useState(false)
     const [selectedConditionInfo, setSelectedConditionInfo] = useState(null)
 
-    const API_BASE = `http://${window.location.hostname}:8000`
+    const API_BASE = import.meta.env.VITE_API_URL || ""
 
     // AppGate in App.jsx already blocks rendering until models are warm
     const isAppReady = true

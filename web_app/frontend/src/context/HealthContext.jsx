@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 
 const HealthContext = createContext(null)
 
-const API_BASE = `http://${window.location.hostname}:8000`
+const API_BASE = import.meta.env.VITE_API_URL || ""
 const POLL_INTERVAL_MS = 5000   // Check every 5s
 const CRASH_MISS_THRESHOLD = 4  // 4 consecutive failures = crashed
 

@@ -3,8 +3,8 @@ import { Activity, Scan, Cpu, FlaskConical, Stethoscope, Bone } from 'lucide-rea
 import { useHealth } from '../context/HealthContext'
 
 const ROUTES = [
-    { path: '/', label: 'Manual', icon: Stethoscope, accent: '#22d3ee', bg: 'rgba(34,211,238,0.1)', border: 'rgba(34,211,238,0.3)', glow: 'rgba(34,211,238,0.2)' },
-    { path: '/auto', label: 'Auto-Pilot', icon: Scan, accent: '#818cf8', bg: 'rgba(129,140,248,0.1)', border: 'rgba(129,140,248,0.3)', glow: 'rgba(129,140,248,0.2)' },
+    { path: '/', label: 'Manual', icon: Stethoscope, accent: '#818cf8', bg: 'rgba(129,140,248,0.1)', border: 'rgba(129,140,248,0.3)', glow: 'rgba(129,140,248,0.2)' },
+    { path: '/auto', label: 'Auto-Pilot', icon: Scan, accent: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.3)', glow: 'rgba(167,139,250,0.2)' },
     { path: '/posture', label: 'Posture', icon: Activity, accent: '#34d399', bg: 'rgba(52,211,153,0.1)', border: 'rgba(52,211,153,0.3)', glow: 'rgba(52,211,153,0.2)' },
     { path: '/deformity', label: 'Spine & Gait', icon: Bone, accent: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.3)', glow: 'rgba(167,139,250,0.2)' },
 ]
@@ -18,8 +18,8 @@ function Navbar() {
 
             {/* â”€â”€ Logo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <div className="flex items-center gap-2.5 shrink-0">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-900/30"
-                    style={{ background: 'linear-gradient(135deg, #22d3ee 0%, #6366f1 100%)' }}>
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center shadow-lg shadow-violet-900/40"
+                    style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)' }}>
                     <Stethoscope className="w-3.5 h-3.5 text-white" />
                 </div>
                 <span className="hidden sm:block font-black text-[13px] tracking-tight" style={{ color: 'var(--text-1)' }}>

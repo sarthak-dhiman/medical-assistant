@@ -20,9 +20,10 @@
   --border-md: rgba(255,255,255,0.13);
 
   /* ─ Accents */
-  --cyan:   #22d3ee;
+  --cyan:   #a78bfa;
   --indigo: #818cf8;
-  --violet: #a78bfa;
+  --violet: #7c3aed;
+  --primary: #7c3aed;
   --green:  #34d399;
   --amber:  #fbbf24;
   --rose:   #fb7185;
@@ -60,8 +61,8 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 70% 50% at -5% -5%,  rgba(34,211,238,0.045) 0%, transparent 55%),
-    radial-gradient(ellipse 60% 40% at 105% 105%, rgba(129,140,248,0.055) 0%, transparent 55%);
+    radial-gradient(ellipse 70% 50% at -5% -5%,  rgba(124,58,237,0.06) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 105% 105%, rgba(129,140,248,0.07) 0%, transparent 55%);
   pointer-events: none;
   z-index: 0;
 }

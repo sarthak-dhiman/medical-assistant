@@ -4,7 +4,7 @@ import { Bone, ScanLine, AlertCircle, CheckCircle, AlertTriangle, XCircle, Activ
 import axios from 'axios'
 import LoadingOverlay from '../components/LoadingOverlay'
 
-const API_BASE = `http://${window.location.hostname}:8000`
+const API_BASE = import.meta.env.VITE_API_URL || ""
 
 const POSE_CONNECTIONS = [
     [0, 1], [1, 2], [2, 3], [3, 7],

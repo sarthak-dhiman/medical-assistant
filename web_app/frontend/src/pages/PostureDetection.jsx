@@ -44,7 +44,7 @@ function PostureDetection() {
     const isProcessing = useRef(false)
     const [facingMode, setFacingMode] = useState("user")
     const [isAppReady, setIsAppReady] = useState(false)
-    const API_BASE = `http://${window.location.hostname}:8000`
+    const API_BASE = import.meta.env.VITE_API_URL || ""
     const SAMPLE_INTERVAL = 250
 
     // ── Health check ────────────────────────────────────────────────────────

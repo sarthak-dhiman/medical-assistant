@@ -16,7 +16,7 @@ function AutomaticDetection() {
     const [detectedMode, setDetectedMode] = useState(null)
     const [selectedConditionInfo, setSelectedConditionInfo] = useState(null)
     const [isAppReady, setIsAppReady] = useState(false)
-    const API_BASE = `http://${window.location.hostname}:8000`
+    const API_BASE = import.meta.env.VITE_API_URL || ""
     const lastRequestTime = useRef(0)
     const isProcessingRef = useRef(false)
     const [facingMode, setFacingMode] = useState('user')

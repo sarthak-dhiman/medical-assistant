@@ -7,7 +7,7 @@ import axios from 'axios'
 import ResultDisplay from './ResultDisplay'
 import { Camera, RefreshCw, Image as ImageIcon, SwitchCamera, Bug, HelpCircle, Info, ChevronRight, X as CloseIcon, Sun, ClipboardList, Bot, Activity, Check, ShieldAlert } from 'lucide-react'
 
-const API_URL = `http://${window.location.hostname}:8000`
+const API_URL = import.meta.env.VITE_API_URL || ""
 
 const WebcamCapture = ({ mode, uploadedImage, isNerdMode, setIsNerdMode, setShowHelp, isAppReady = true, setSelectedConditionInfo }) => {
     const webcamRef = useRef(null)
