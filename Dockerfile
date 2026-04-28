@@ -48,8 +48,7 @@ RUN if [ -e /opt/conda/lib/libnvrtc.so.11.2 ]; then \
 
 COPY segformer_utils.py inference_pytorch.py inference_new_models.py vis_utils.py posture_rules.py ./
 COPY saved_models ./saved_models
-COPY saved_models_onnx ./saved_models_onnx
-COPY external ./external
+RUN mkdir -p saved_models_onnx
 COPY web_app/backend ./web_app/backend
 
 COPY --from=frontend-builder /frontend/dist /usr/share/nginx/html
