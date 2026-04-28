@@ -185,7 +185,7 @@ services:
   # 9. Celery Exporter
   celery-exporter:
     image: danihodovic/celery-exporter
-    command: [ "--broker", "redis://redis:6379/0" ]
+    command: [ "--broker-url", "redis://redis:6379/0" ]
     ports:
       - "9808:9808"
     depends_on:
